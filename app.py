@@ -1,0 +1,437 @@
+"""Live classes and the per-class tutor (hackathon build, Passaly style).
+
+A teacher opens a class, students join with the invite link, and every
+browser posts its own speaker's captions as transcript lines. When the class
+ends the AI rewrites the teacher's style profile and each student's learning
+profile. Afterwards a student asks the class tutor; what the class did not
+cover goes to the teacher, and her answer becomes part of that class's pack.
+
+    .venv/bin/uvicorn app:app --reload        # http://localhost:8000
+
+Moving into Passaly: the router goes to quiz-api as is, get_person becomes
+auth.get_current_user, and the Person table goes away.
+"""
+
+import os
+import re
+import secrets
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
+from openai import AsyncOpenAI
+from pydantic import BaseModel
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from models import (
+    ClassLine, ClassMember, ClassSession, LearnerProfile, Person, TutorQuestion,
+    create_tables, get_session_factory,
+)
+
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///classes.db")
+# Any OpenAI-compatible endpoint: OpenAI itself, Gemma/Gemini through Google's
+# compatible API, or a local llama.cpp / Ollama server.
+TUTOR_MODEL = os.getenv("TUTOR_MODEL", "gpt-4o-mini")
+TUTOR_BASE_URL = os.getenv("TUTOR_BASE_URL") or None
+TUTOR_API_KEY = os.getenv("TUTOR_API_KEY") or os.getenv("OPENAI_API_KEY", "")
+
+MAX_LINE = 1000
+MAX_QUESTION = 1000
+MAX_ANSWER = 4000
+# ponytail: the whole transcript goes in the prompt. A long class is cut to its
+# last MAX_PACK_CHARS; split into chunks and retrieve if classes outgrow it.
+MAX_PACK_CHARS = 60000
+ASKS_PER_DAY = 50
+LANGS = {"en-US", "en-CA", "pt-BR", "es-ES", "fr-CA", "fr-FR"}
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await create_tables(DATABASE_URL)
+    yield
+
+
+app = FastAPI(title="Class Tutor", lifespan=lifespan, docs_url=None, redoc_url=None)
+router = APIRouter(prefix="/api/classes")
+
+
+async def get_db() -> AsyncSession:
+    async with get_session_factory(DATABASE_URL)() as session:
+        yield session
+
+
+@dataclass
+class AnswerUser:
+    """Same shape as quiz-api's auth.AnswerUser, so the routes port unchanged."""
+    id: str
+    username: str
+    display_name: str
+
+
+async def get_person(request: Request, db: AsyncSession = Depends(get_db)) -> AnswerUser:
+    key = request.headers.get("X-Person-Key", "")
+    p = key and (await db.execute(select(Person).where(Person.key == key))).scalar_one_or_none()
+    if not p:
+        raise HTTPException(401, "Who are you? Enter your name first")
+    return AnswerUser(id=str(p.id), username=p.name, display_name=p.name)
+
+
+get_current_user = get_person
+
+
+class NewPerson(BaseModel):
+    name: str
+
+
+@app.post("/api/people", status_code=201)
+async def new_person(body: NewPerson, db: AsyncSession = Depends(get_db)):
+    p = Person(name=_clean(body.name, 60, "Name"), key=secrets.token_urlsafe(24))
+    db.add(p)
+    await db.commit()
+    return {"id": p.id, "name": p.name, "key": p.key}
+
+
+def _clean(raw, limit: int, what: str) -> str:
+    text = re.sub(r"\s+", " ", raw or "").strip()
+    if not text:
+        raise HTTPException(400, f"{what} is empty")
+    if len(text) > limit:
+        raise HTTPException(400, f"{what} is longer than {limit} characters")
+    return text
+
+
+def _name(user: AnswerUser) -> str:
+    return user.display_name or user.username
+
+
+# --- the AI ---------------------------------------------------------------------
+
+async def _llm(system: str, user: str) -> str:
+    if not TUTOR_API_KEY:
+        raise HTTPException(503, "The tutor is not configured")
+    client = AsyncOpenAI(api_key=TUTOR_API_KEY, base_url=TUTOR_BASE_URL)
+    resp = await client.chat.completions.create(
+        model=TUTOR_MODEL, temperature=0.3,
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+    )
+    return (resp.choices[0].message.content or "").strip()
+
+
+def build_pack(session, lines, answered, teacher_style: str, student_profile: str) -> str:
+    """Everything the tutor may use for one class, newest transcript kept."""
+    transcript = "\n".join(f"{l.name} ({l.role}): {l.text}" for l in lines)
+    if len(transcript) > MAX_PACK_CHARS:
+        transcript = transcript[-MAX_PACK_CHARS:]
+    extra = "\n\n".join(f"Q: {q.question}\n{session.teacher_name}: {q.teacher_answer}"
+                        for q in answered)
+    return (
+        f"CLASS: {session.title}" + (f" ({session.subject})" if session.subject else "") +
+        f"\nTEACHER: {session.teacher_name}"
+        f"\n\n[HOW {session.teacher_name.upper()} TEACHES]\n{teacher_style or 'Not known yet.'}"
+        f"\n\n[HOW THIS STUDENT LEARNS]\n{student_profile or 'Not known yet.'}"
+        f"\n\n[TRANSCRIPT]\n{transcript or '(empty)'}"
+        f"\n\n[THE TEACHER'S LATER ANSWERS]\n{extra or '(none)'}"
+    )
+
+
+TUTOR_SYSTEM = (
+    "You are the after-class tutor for {teacher}'s class. Explain the way {teacher} "
+    "does: reuse her examples, analogies and tone from the material. Adapt to how "
+    "this student learns. Answer in the language the student asks in.\n"
+    "Use ONLY the material: the transcript and the teacher's later answers. If they "
+    "do not cover the question, do not guess.\n"
+    "Reply in exactly this format:\n"
+    "IN_CLASS: yes or no\n"
+    "ANSWER: your answer (if no, say kindly that you are asking {teacher} and she will reply)"
+)
+
+
+def parse_tutor(raw: str) -> tuple[bool, str]:
+    """(from_class, answer). Anything unreadable goes to the teacher: a wrong
+    'yes' would hide a question she should have seen."""
+    m = re.search(r"IN_CLASS:\s*(yes|no)\b", raw, re.I)
+    a = re.search(r"ANSWER:\s*(.*)", raw, re.I | re.S)
+    answer = (a.group(1) if a else raw).strip()
+    return bool(m and m.group(1).lower() == "yes"), answer
+
+
+STYLE_SYSTEM = (
+    "You keep a short profile (max 150 words) of how a teacher teaches: the "
+    "examples and analogies she likes, how she checks understanding, pace, level "
+    "of detail, language mix, tone. Update the profile with what this class "
+    "shows. Reply with the profile only."
+)
+LEARNER_SYSTEM = (
+    "You keep a short profile (max 120 words) of how one student learns: what "
+    "confuses them, which explanations worked, their level, the language they "
+    "prefer, their goals. Update it with this class and their questions. Reply "
+    "with the profile only. Do not include personal data beyond learning."
+)
+
+
+async def _profile(db, user_id: str, kind: str) -> str:
+    row = (await db.execute(select(LearnerProfile).where(
+        LearnerProfile.user_id == user_id, LearnerProfile.kind == kind))).scalar_one_or_none()
+    return row.text if row else ""
+
+
+async def _save_profile(db, user_id: str, kind: str, text: str):
+    row = (await db.execute(select(LearnerProfile).where(
+        LearnerProfile.user_id == user_id, LearnerProfile.kind == kind))).scalar_one_or_none()
+    if row:
+        row.text, row.updated_at = text, datetime.now(timezone.utc)
+    else:
+        db.add(LearnerProfile(user_id=user_id, kind=kind, text=text))
+
+
+async def _update_profiles(session_id: int):
+    """After class: one call for the teacher's style, one per student."""
+    async with get_session_factory(DATABASE_URL)() as db:
+        s = await db.get(ClassSession, session_id)
+        lines = (await db.execute(select(ClassLine).where(
+            ClassLine.session_id == session_id).order_by(ClassLine.id))).scalars().all()
+        transcript = "\n".join(f"{l.name} ({l.role}): {l.text}" for l in lines)[-MAX_PACK_CHARS:]
+        if not transcript:
+            return
+        old = await _profile(db, s.teacher_id, "teacher")
+        await _save_profile(db, s.teacher_id, "teacher", await _llm(
+            STYLE_SYSTEM, f"CURRENT PROFILE:\n{old or '(none)'}\n\nCLASS TRANSCRIPT:\n{transcript}"))
+        students = (await db.execute(select(ClassMember).where(
+            ClassMember.session_id == session_id, ClassMember.role == "student"))).scalars().all()
+        for m in students:
+            asked = (await db.execute(select(TutorQuestion.question).where(
+                TutorQuestion.session_id == session_id,
+                TutorQuestion.student_id == m.user_id))).scalars().all()
+            old = await _profile(db, m.user_id, "student")
+            await _save_profile(db, m.user_id, "student", await _llm(
+                LEARNER_SYSTEM,
+                f"STUDENT: {m.name}\nCURRENT PROFILE:\n{old or '(none)'}\n\n"
+                f"CLASS TRANSCRIPT:\n{transcript}\n\nTHEIR TUTOR QUESTIONS:\n" +
+                ("\n".join(asked) or "(none)")))
+        await db.commit()
+
+
+# --- membership -----------------------------------------------------------------
+
+async def _member(db, session_id: int, user: AnswerUser):
+    s = await db.get(ClassSession, session_id)
+    m = (await db.execute(select(ClassMember).where(
+        ClassMember.session_id == session_id, ClassMember.user_id == user.id))).scalar_one_or_none()
+    if not s or not m:
+        raise HTTPException(404, "Class not found")
+    return s, m
+
+
+def _session_out(s: ClassSession, role: str) -> dict:
+    out = {"id": s.id, "title": s.title, "subject": s.subject, "lang": s.lang,
+           "call_url": s.call_url, "status": s.status, "teacher": s.teacher_name,
+           "role": role, "created_at": s.created_at.isoformat()}
+    if role == "teacher":
+        out["invite_token"] = s.invite_token
+    return out
+
+
+class NewClass(BaseModel):
+    title: str
+    subject: str | None = None
+    lang: str = "en-US"
+    call_url: str | None = None
+
+
+@router.post("", status_code=201)
+async def create_class(body: NewClass, user: AnswerUser = Depends(get_current_user),
+                       db: AsyncSession = Depends(get_db)):
+    if body.lang not in LANGS:
+        raise HTTPException(400, f"lang must be one of {sorted(LANGS)}")
+    url = (body.call_url or "").strip() or None
+    if url and not url.startswith("https://"):
+        raise HTTPException(400, "The call link must start with https://")
+    s = ClassSession(teacher_id=user.id, teacher_name=_name(user),
+                     title=_clean(body.title, 200, "Title"),
+                     subject=(body.subject or "").strip()[:100] or None,
+                     lang=body.lang, call_url=url, invite_token=secrets.token_urlsafe(12))
+    db.add(s)
+    await db.flush()
+    db.add(ClassMember(session_id=s.id, user_id=user.id, name=_name(user), role="teacher"))
+    await db.commit()
+    return _session_out(s, "teacher")
+
+
+@router.get("")
+async def my_classes(user: AnswerUser = Depends(get_current_user),
+                     db: AsyncSession = Depends(get_db)):
+    rows = (await db.execute(
+        select(ClassSession, ClassMember.role).join(ClassMember, ClassMember.session_id == ClassSession.id)
+        .where(ClassMember.user_id == user.id).order_by(ClassSession.id.desc()))).all()
+    return [_session_out(s, role) for s, role in rows]
+
+
+@router.post("/join/{token}")
+async def join_class(token: str, user: AnswerUser = Depends(get_current_user),
+                     db: AsyncSession = Depends(get_db)):
+    s = (await db.execute(select(ClassSession).where(
+        ClassSession.invite_token == token))).scalar_one_or_none()
+    if not s:
+        raise HTTPException(404, "Invite not found")
+    m = (await db.execute(select(ClassMember).where(
+        ClassMember.session_id == s.id, ClassMember.user_id == user.id))).scalar_one_or_none()
+    if not m:
+        m = ClassMember(session_id=s.id, user_id=user.id, name=_name(user), role="student")
+        db.add(m)
+        await db.commit()
+    return _session_out(s, m.role)
+
+
+@router.get("/{session_id}")
+async def get_class(session_id: int, user: AnswerUser = Depends(get_current_user),
+                    db: AsyncSession = Depends(get_db)):
+    s, m = await _member(db, session_id, user)
+    members = (await db.execute(select(ClassMember).where(
+        ClassMember.session_id == session_id).order_by(ClassMember.id))).scalars().all()
+    return {**_session_out(s, m.role), "members": [{"name": x.name, "role": x.role} for x in members]}
+
+
+# --- transcript -----------------------------------------------------------------
+
+class Line(BaseModel):
+    text: str
+
+
+@router.post("/{session_id}/lines", status_code=201)
+async def add_line(session_id: int, body: Line, user: AnswerUser = Depends(get_current_user),
+                   db: AsyncSession = Depends(get_db)):
+    s, m = await _member(db, session_id, user)
+    if s.status != "live":
+        raise HTTPException(409, "The class has ended")
+    line = ClassLine(session_id=s.id, user_id=user.id, name=m.name, role=m.role,
+                     text=_clean(body.text, MAX_LINE, "Line"))
+    db.add(line)
+    await db.commit()
+    return {"id": line.id}
+
+
+@router.get("/{session_id}/lines")
+async def get_lines(session_id: int, after: int = 0, user: AnswerUser = Depends(get_current_user),
+                    db: AsyncSession = Depends(get_db)):
+    """Polled every few seconds during class: only lines newer than `after`."""
+    s, _ = await _member(db, session_id, user)
+    rows = (await db.execute(select(ClassLine).where(
+        ClassLine.session_id == session_id, ClassLine.id > after)
+        .order_by(ClassLine.id).limit(500))).scalars().all()
+    return {"status": s.status, "lines": [
+        {"id": l.id, "name": l.name, "role": l.role, "text": l.text,
+         "at": l.created_at.isoformat()} for l in rows]}
+
+
+@router.post("/{session_id}/end")
+async def end_class(session_id: int, tasks: BackgroundTasks,
+                    user: AnswerUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    s, m = await _member(db, session_id, user)
+    if m.role != "teacher":
+        raise HTTPException(403, "Only the teacher can end the class")
+    if s.status == "live":
+        s.status = "ended"
+        await db.commit()
+        tasks.add_task(_update_profiles, s.id)
+    return _session_out(s, m.role)
+
+
+# --- tutor ----------------------------------------------------------------------
+
+def _question_out(q: TutorQuestion) -> dict:
+    return {"id": q.id, "session_id": q.session_id, "student": q.student_name,
+            "question": q.question, "ai_answer": q.ai_answer, "from_class": q.from_class,
+            "teacher_answer": q.teacher_answer, "status": q.status,
+            "created_at": q.created_at.isoformat()}
+
+
+class Ask(BaseModel):
+    question: str
+
+
+@router.post("/{session_id}/ask")
+async def ask_tutor(session_id: int, body: Ask, user: AnswerUser = Depends(get_current_user),
+                    db: AsyncSession = Depends(get_db)):
+    s, m = await _member(db, session_id, user)
+    if m.role != "student":
+        raise HTTPException(403, "The tutor is for the class's students")
+    question = _clean(body.question, MAX_QUESTION, "Question")
+    today = (await db.execute(select(func.count()).select_from(TutorQuestion).where(
+        TutorQuestion.student_id == user.id,
+        TutorQuestion.created_at > datetime.now(timezone.utc) - timedelta(days=1)))).scalar()
+    if today >= ASKS_PER_DAY:
+        raise HTTPException(429, f"You can ask {ASKS_PER_DAY} questions a day")
+    lines = (await db.execute(select(ClassLine).where(
+        ClassLine.session_id == s.id).order_by(ClassLine.id))).scalars().all()
+    answered = (await db.execute(select(TutorQuestion).where(
+        TutorQuestion.session_id == s.id, TutorQuestion.teacher_answer.is_not(None))
+        .order_by(TutorQuestion.id))).scalars().all()
+    pack = build_pack(s, lines, answered, await _profile(db, s.teacher_id, "teacher"),
+                      await _profile(db, user.id, "student"))
+    raw = await _llm(TUTOR_SYSTEM.format(teacher=s.teacher_name),
+                     f"{pack}\n\n[STUDENT {m.name} ASKS]\n{question}")
+    from_class, answer = parse_tutor(raw)
+    q = TutorQuestion(session_id=s.id, student_id=user.id, student_name=m.name,
+                      question=question, ai_answer=answer, from_class=from_class,
+                      status="answered" if from_class else "waiting_teacher")
+    db.add(q)
+    await db.commit()
+    return _question_out(q)
+
+
+@router.get("/{session_id}/questions")
+async def class_questions(session_id: int, user: AnswerUser = Depends(get_current_user),
+                          db: AsyncSession = Depends(get_db)):
+    """A student sees their own questions; the teacher sees everyone's."""
+    s, m = await _member(db, session_id, user)
+    stmt = select(TutorQuestion).where(TutorQuestion.session_id == s.id)
+    if m.role != "teacher":
+        stmt = stmt.where(TutorQuestion.student_id == user.id)
+    rows = (await db.execute(stmt.order_by(TutorQuestion.id.desc()))).scalars().all()
+    return [_question_out(q) for q in rows]
+
+
+@router.get("/inbox/waiting")
+async def teacher_inbox(user: AnswerUser = Depends(get_current_user),
+                        db: AsyncSession = Depends(get_db)):
+    """Questions the tutor could not answer, across all of the teacher's classes."""
+    rows = (await db.execute(
+        select(TutorQuestion, ClassSession.title).join(ClassSession, ClassSession.id == TutorQuestion.session_id)
+        .where(ClassSession.teacher_id == user.id, TutorQuestion.status == "waiting_teacher")
+        .order_by(TutorQuestion.id))).all()
+    return [{**_question_out(q), "class_title": title} for q, title in rows]
+
+
+class TeacherAnswer(BaseModel):
+    text: str
+
+
+@router.post("/questions/{question_id}/answer")
+async def answer_question(question_id: int, body: TeacherAnswer,
+                          user: AnswerUser = Depends(get_current_user),
+                          db: AsyncSession = Depends(get_db)):
+    q = await db.get(TutorQuestion, question_id)
+    s = q and await db.get(ClassSession, q.session_id)
+    if not q or s.teacher_id != user.id:
+        raise HTTPException(404, "Question not found")
+    q.teacher_answer = _clean(body.text, MAX_ANSWER, "Answer")
+    q.status = "teacher_answered"
+    await db.commit()
+    return _question_out(q)
+
+
+app.include_router(router)
+
+STATIC = Path(__file__).parent / "static"
+
+
+@app.get("/{path:path}", include_in_schema=False)
+async def page(path: str):
+    """One page app: every non-API path gets index.html (invite links included)."""
+    if path.startswith("api/"):
+        raise HTTPException(404)
+    return FileResponse(STATIC / "index.html")
