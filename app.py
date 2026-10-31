@@ -6,7 +6,7 @@ ends the AI rewrites the teacher's style profile and each student's learning
 profile. Afterwards a student asks the class tutor; what the class did not
 cover goes to the teacher, and her answer becomes part of that class's pack.
 
-    .venv/bin/uvicorn app:app --reload        # http://localhost:8000
+    .venv/bin/uvicorn app:app --reload --port 8010   # http://localhost:8010
 
 Moving into Passaly: the router goes to quiz-api as is, get_person becomes
 auth.get_current_user, and the Person table goes away.

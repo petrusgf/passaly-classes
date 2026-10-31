@@ -15,7 +15,7 @@ inbox. Her answer reaches the student and joins that class's material.
     export TUTOR_API_KEY=...          # any OpenAI-compatible endpoint
     # export TUTOR_BASE_URL=...       # e.g. Google's OpenAI-compatible API, or Ollama
     # export TUTOR_MODEL=...          # default gpt-4o-mini
-    .venv/bin/uvicorn app:app --reload   # http://localhost:8000
+    .venv/bin/uvicorn app:app --reload --port 8010   # http://localhost:8010
 
 Live captions need Chrome or Edge (Web Speech API); other browsers can type lines.
 
