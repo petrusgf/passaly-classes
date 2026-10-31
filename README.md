@@ -21,6 +21,62 @@ Live captions need Chrome or Edge (Web Speech API); other browsers can type line
 
     .venv/bin/python test_app.py      # whole flow with a fake AI
 
+## Phone app (Android): the tutor runs on the phone with Llama
+
+`app/` is a Flutter app. All AI runs on the phone with Meta's Llama 3.2
+(1B or 3B, picked per phone RAM) through LiteRT-LM, the runtime the Passaly app
+already uses for Gemma. The server only stores classes, lines, questions and
+profiles; with the phone app, no cloud AI sees a student's questions.
+
+- Captions: Android's own speech recognizer, offline when the phone has the
+  language pack.
+- Tutor: the phone first matches the question against the transcript. No
+  match goes straight to the teacher; a match is answered by Llama from only
+  those passages, in the teacher's style.
+- Profiles: the teacher's phone writes her teaching style when she ends the
+  class; each student's phone writes their learning profile once afterwards.
+
+### 1. Put the Llama files on the laptop
+
+Accept Meta's license on Hugging Face (litert-community/Llama-3.2-1B and
+-3B), then download into `models/` next to `models/index.json`:
+
+    models/llama3_2_1b_mixed_int4_gpu.litertlm
+    models/llama3_2_3b_mixed_int4_gpu.litertlm   (optional)
+    models/LICENSE.txt  models/NOTICE.txt        (from the same repo; the license
+                                                  requires shipping them)
+
+The app checks each file against the SHA-256 in `index.json`.
+
+### 2. Let the phones reach the laptop
+
+The server must listen on all interfaces:
+
+    .venv/bin/uvicorn app:app --host 0.0.0.0 --port 8010
+
+WSL 2 is not reachable from the Wi-Fi by default
+([Microsoft docs](https://learn.microsoft.com/en-us/windows/wsl/networking)).
+In an admin PowerShell on Windows (redo the first line after a reboot; the
+WSL address changes):
+
+    netsh interface portproxy add v4tov4 listenport=8010 listenaddress=0.0.0.0 connectport=8010 connectaddress=$(wsl hostname -I).Trim()
+    New-NetFirewallRule -DisplayName "Passaly Classes 8010" -Direction Inbound -Protocol TCP -LocalPort 8010 -Action Allow
+
+In the app, the class server is the laptop's Wi-Fi address, e.g. `192.168.1.76:8010`.
+
+### 3. Build and install
+
+    cd app && flutter build apk --release
+    adb install build/app/outputs/flutter-apk/app-release.apk
+
+`flutter test` runs the tutor's retrieval and reply checks.
+
+## Built with Llama
+
+Llama 3.2 is licensed under the Llama 3.2 Community License, Copyright © Meta
+Platforms, Inc. All Rights Reserved. The app shows this and the license text
+on its "Llama on this phone" screen.
+
 ## Moving into Passaly later
 
 Same stack and style as quiz-api (FastAPI, SQLAlchemy async, one router).

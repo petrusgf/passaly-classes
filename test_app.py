@@ -79,4 +79,23 @@ with TestClient(app.app) as c:
     assert len(c.get(f"/api/classes/{cid}/questions", headers=gio).json()) == 3
     assert c.get("/join/abc").status_code == 200  # the page handles invite links
 
+    # --- the phone app: Llama answers on the phone, the server only stores -------
+    pack = c.get(f"/api/classes/{cid}/pack", headers=siena).json()
+    assert [l["text"] for l in pack["lines"]][0] == "A parkway was a road through a park."
+    assert pack["teacher_answers"] == [{"question": "What is the subjunctive?", "answer": "It expresses wishes."}]
+    assert pack["teacher_style"] == "Uses road examples." and pack["my_profile"] == "Uses road examples."
+    assert c.get(f"/api/classes/{cid}/pack", headers=stranger).status_code == 404
+
+    asked = len(seen)
+    r = c.post(f"/api/classes/{cid}/questions", headers=siena,
+               json={"question": "What is a gerund?", "ai_answer": "Sent to Giovanna.", "from_class": False}).json()
+    assert r["status"] == "waiting_teacher" and len(seen) == asked  # no server AI involved
+    assert [q["id"] for q in c.get("/api/classes/inbox/waiting", headers=gio).json()] == [r["id"]]
+    assert c.post(f"/api/classes/{cid}/questions", headers=gio,
+                  json={"question": "x", "ai_answer": "y", "from_class": True}).status_code == 403
+
+    assert c.put("/api/profiles/teacher", headers=gio, json={"text": "Draws maps."}).status_code == 200
+    assert c.get(f"/api/classes/{cid}/pack", headers=siena).json()["teacher_style"] == "Draws maps."
+    assert c.put("/api/profiles/admin", headers=gio, json={"text": "x"}).status_code == 400
+
 print("class tutor: ok")

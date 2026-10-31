@@ -189,7 +189,10 @@ async def _save_profile(db, user_id: str, kind: str, text: str):
 
 
 async def _update_profiles(session_id: int):
-    """After class: one call for the teacher's style, one per student."""
+    """After class: one call for the teacher's style, one per student.
+    Skipped without a server AI: then the phones build the profiles on-device."""
+    if not TUTOR_API_KEY:
+        return
     async with get_session_factory(DATABASE_URL)() as db:
         s = await db.get(ClassSession, session_id)
         lines = (await db.execute(select(ClassLine).where(
@@ -424,7 +427,75 @@ async def answer_question(question_id: int, body: TeacherAnswer,
     return _question_out(q)
 
 
+# --- for the phone app: the AI runs on the phone, the server only keeps data ---------
+
+@router.get("/{session_id}/pack")
+async def class_pack(session_id: int, user: AnswerUser = Depends(get_current_user),
+                     db: AsyncSession = Depends(get_db)):
+    """Everything the on-device tutor needs for one class."""
+    s, m = await _member(db, session_id, user)
+    lines = (await db.execute(select(ClassLine).where(
+        ClassLine.session_id == s.id).order_by(ClassLine.id))).scalars().all()
+    answered = (await db.execute(select(TutorQuestion).where(
+        TutorQuestion.session_id == s.id, TutorQuestion.teacher_answer.is_not(None))
+        .order_by(TutorQuestion.id))).scalars().all()
+    return {
+        **_session_out(s, m.role),
+        "lines": [{"name": l.name, "role": l.role, "text": l.text} for l in lines],
+        "teacher_answers": [{"question": q.question, "answer": q.teacher_answer} for q in answered],
+        "teacher_style": await _profile(db, s.teacher_id, "teacher"),
+        "my_profile": await _profile(db, user.id, m.role),
+    }
+
+
+class OnDeviceAnswer(BaseModel):
+    question: str
+    ai_answer: str
+    from_class: bool
+
+
+@router.post("/{session_id}/questions", status_code=201)
+async def record_question(session_id: int, body: OnDeviceAnswer,
+                          user: AnswerUser = Depends(get_current_user),
+                          db: AsyncSession = Depends(get_db)):
+    """A question the phone already answered (or could not): saved so the
+    teacher sees it, and sent to her inbox when the class did not cover it."""
+    s, m = await _member(db, session_id, user)
+    if m.role != "student":
+        raise HTTPException(403, "The tutor is for the class's students")
+    q = TutorQuestion(session_id=s.id, student_id=user.id, student_name=m.name,
+                      question=_clean(body.question, MAX_QUESTION, "Question"),
+                      ai_answer=_clean(body.ai_answer, MAX_ANSWER, "Answer"),
+                      from_class=body.from_class,
+                      status="answered" if body.from_class else "waiting_teacher")
+    db.add(q)
+    await db.commit()
+    return _question_out(q)
+
+
+class ProfileText(BaseModel):
+    text: str
+
+
+@app.put("/api/profiles/{kind}")
+async def put_profile(kind: str, body: ProfileText, user: AnswerUser = Depends(get_current_user),
+                      db: AsyncSession = Depends(get_db)):
+    """The phone writes its own person's profile: teacher style or learner."""
+    if kind not in ("teacher", "student"):
+        raise HTTPException(400, "kind is teacher or student")
+    await _save_profile(db, user.id, kind, _clean(body.text, 2000, "Profile"))
+    await db.commit()
+    return {"ok": True}
+
+
 app.include_router(router)
+
+# Llama model files for the phones, served from the laptop on the same Wi-Fi.
+# Meta's license travels with them: LICENSE.txt and NOTICE.txt sit in the folder.
+MODELS = Path(os.getenv("MODELS_DIR", Path(__file__).parent / "models"))
+if MODELS.is_dir():
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/models", StaticFiles(directory=MODELS), name="models")
 
 STATIC = Path(__file__).parent / "static"
 

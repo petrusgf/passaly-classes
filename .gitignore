@@ -2,3 +2,6 @@
 __pycache__/
 *.db
 .env
+models/*.litertlm
+models/LICENSE.txt
+models/NOTICE.txt
