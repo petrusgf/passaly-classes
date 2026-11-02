@@ -1,24 +1,24 @@
 {
- "models": [
-  {
-   "id": "llama-3.2-1b",
-   "title": "Llama 3.2 1B",
-   "file": "llama3_2_1b_mixed_int4_gpu.litertlm",
-   "sha256": "****************************************************************",
-   "bytes": 963903488,
-   "min_ram": 5300000000,
-   "note": "Fast, works on most recent phones.",
-   "source": "https://huggingface.co/litert-community/Llama-3.2-1B"
-  },
-  {
-   "id": "llama-3.2-3b",
-   "title": "Llama 3.2 3B",
-   "file": "llama3_2_3b_mixed_int4_gpu.litertlm",
-   "sha256": "****************************************************************",
-   "bytes": 2207940608,
-   "min_ram": 7500000000,
-   "note": "Better answers, needs 8 GB RAM.",
-   "source": "https://huggingface.co/litert-community/Llama-3.2-3B"
-  }
- ]
+  "models": [
+    {
+      "id": "llama-3.2-1b",
+      "title": "Llama 3.2 1B",
+      "file": "llama3_2_1b_mixed_int4_gpu.litertlm",
+      "sha256": "c6f21c5304c40f45b69e5bfb15bb45acbaad7938e941d25a0a391aef0ec6ac27",
+      "bytes": 963903488,
+      "min_ram": 5300000000,
+      "note": "Fast, works on most recent phones.",
+      "source": "https://huggingface.co/litert-community/Llama-3.2-1B"
+    },
+    {
+      "id": "llama-3.2-3b",
+      "title": "Llama 3.2 3B",
+      "file": "llama3_2_3b_mixed_int4_gpu.litertlm",
+      "sha256": "63419d689ef141cc77d6ab5739f27426d779e1165546a4904edefa9fc36fea51",
+      "bytes": 2207940608,
+      "min_ram": 7500000000,
+      "note": "Better answers, needs 8 GB RAM.",
+      "source": "https://huggingface.co/litert-community/Llama-3.2-3B"
+    }
+  ]
 }
