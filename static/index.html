@@ -27,7 +27,7 @@
 <body>
 <nav class="navbar bg-white border-bottom mb-4">
   <div class="container">
-    <a class="navbar-brand brand" href="/">Passaly <span class="fw-normal text-body-secondary fs-6">Classes</span></a>
+    <a class="navbar-brand brand" href="/" data-go>Passaly <span class="fw-normal text-body-secondary fs-6">Classes</span></a>
     <span id="me" class="small text-body-secondary"></span>
   </div>
 </nav>
@@ -39,9 +39,11 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const view = $('#view');
 let me = JSON.parse(localStorage.getItem('person') || 'null');
 let timers = [];
+// Served at / locally and at /classes on passaly.com (nginx strips the prefix).
+const ROOT = location.pathname.startsWith('/classes') ? '/classes' : '';
 
 async function api(method, path, body) {
-  const r = await fetch(path, {
+  const r = await fetch(ROOT + path, {
     method, headers: {'Content-Type': 'application/json', 'X-Person-Key': me?.key || ''},
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -50,7 +52,7 @@ async function api(method, path, body) {
   return data;
 }
 
-function go(path) { history.pushState(null, '', path); route(); }
+function go(path) { history.pushState(null, '', ROOT + path); route(); }
 window.onpopstate = route;
 document.addEventListener('click', e => {
   const a = e.target.closest('a[data-go]');
@@ -62,7 +64,7 @@ function route() {
   stopCaptions();
   $('#me').textContent = me ? `Signed in as ${me.name}` : '';
   if (!me) return askName();
-  const p = location.pathname;
+  const p = location.pathname.slice(ROOT.length);
   let m;
   if ((m = p.match(/^\/join\/([\w-]+)$/))) return join(m[1]);
   if ((m = p.match(/^\/class\/(\d+)$/))) return room(+m[1]);
@@ -157,7 +159,7 @@ function bindAnswers(root, after) {
 
 // --- join -----------------------------------------------------------------------
 async function join(token) {
-  try { const c = await api('POST', `/api/classes/join/${token}`); history.replaceState(null, '', `/class/${c.id}`); route(); }
+  try { const c = await api('POST', `/api/classes/join/${token}`); history.replaceState(null, '', `${ROOT}/class/${c.id}`); route(); }
   catch (x) { view.innerHTML = `<div class="alert alert-warning">${esc(x.message)}</div>`; }
 }
 
@@ -169,7 +171,7 @@ async function room(id) {
   try { c = await api('GET', `/api/classes/${id}`); }
   catch (x) { view.innerHTML = `<div class="alert alert-warning">${esc(x.message)}</div>`; return; }
   const teacher = c.role === 'teacher', live = c.status === 'live';
-  const invite = `${location.origin}/join/${c.invite_token}`;
+  const invite = `${location.origin}${ROOT}/join/${c.invite_token}`;
   lastLine = 0;
   view.innerHTML = `
     <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
