@@ -27,7 +27,8 @@ class StartScreen extends StatefulWidget {
 }
 
 class _StartScreenState extends State<StartScreen> {
-  final _server = TextEditingController(text: Api.base.replaceFirst('http://', ''));
+  final _server = TextEditingController(
+      text: Api.base.isEmpty ? 'passaly.com/classes' : Api.base.replaceFirst(RegExp(r'^https?://'), ''));
   final _name = TextEditingController(text: Api.name);
   bool _busy = false;
 
@@ -58,8 +59,8 @@ class _StartScreenState extends State<StartScreen> {
               controller: _server,
               keyboardType: TextInputType.url,
               decoration: const InputDecoration(
-                  labelText: 'Class server', hintText: '192.168.1.20:8010', border: OutlineInputBorder(),
-                  helperText: 'The laptop running the class server, on this Wi-Fi'),
+                  labelText: 'Class server', hintText: 'passaly.com/classes', border: OutlineInputBorder(),
+                  helperText: 'passaly.com/classes, or a laptop on this Wi-Fi'),
             ),
             const SizedBox(height: 24),
             FilledButton(onPressed: _busy ? null : _go, child: Text(_busy ? 'Connecting…' : 'Continue')),

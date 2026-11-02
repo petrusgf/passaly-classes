@@ -24,7 +24,12 @@ class Api {
   static String normalize(String raw) {
     var b = raw.trim();
     if (b.isEmpty) return b;
-    if (!b.startsWith('http://') && !b.startsWith('https://')) b = 'http://$b';
+    if (!b.startsWith('http://') && !b.startsWith('https://')) {
+      // A laptop on the Wi-Fi (an IP or localhost) is plain HTTP; a domain is
+      // HTTPS, whose HTTP side only redirects, which a POST will not follow.
+      final local = RegExp(r'^(localhost|[\d.]+)(:\d+)?(/|$)').hasMatch(b);
+      b = '${local ? 'http' : 'https'}://$b';
+    }
     return b.replaceAll(RegExp(r'/+$'), '');
   }
 
