@@ -198,7 +198,7 @@ class _HomeScreenState extends State<HomeScreen> {
           title: const Text('Passaly Classes'),
           actions: [
             IconButton(
-              tooltip: 'Llama on this phone',
+              tooltip: 'Tutor AI',
               icon: const Icon(Icons.memory),
               onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ModelsScreen())),
             ),

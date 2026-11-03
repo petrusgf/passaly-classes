@@ -78,6 +78,7 @@ with TestClient(app.app) as c:
     assert len(c.get(f"/api/classes/{cid}/questions", headers=siena).json()) == 3
     assert len(c.get(f"/api/classes/{cid}/questions", headers=gio).json()) == 3
     assert c.get("/join/abc").status_code == 200  # the page handles invite links
+    assert c.get("/api/tutor").json() == {"cloud": True, "model": app.TUTOR_MODEL}
 
     # --- the phone app: Llama answers on the phone, the server only stores -------
     pack = c.get(f"/api/classes/{cid}/pack", headers=siena).json()

@@ -7,8 +7,9 @@ import 'api.dart';
 import 'llama.dart';
 import 'main.dart';
 
-/// Pick and download the Llama model this phone runs, and the license notice
-/// Meta's Llama 3.2 Community License asks every distributor to show.
+/// Choose where the tutor runs (Llama on this phone, or the server's Muse
+/// Spark), pick and download the Llama model, and the license notice Meta's
+/// Llama 3.2 Community License asks every distributor to show.
 class ModelsScreen extends StatefulWidget {
   const ModelsScreen({super.key});
   @override
@@ -24,6 +25,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
   Map<String, dynamic>? _progress;
   Timer? _timer;
   String? _error;
+  String? _cloudModel;  // the server's Muse model, null when it has none
 
   @override
   void initState() {
@@ -53,6 +55,8 @@ class _ModelsScreenState extends State<ModelsScreen> {
         _pending = pending;
       });
       if (pending != null) _watch();
+      final info = await Api.tutorInfo();
+      if (mounted) setState(() => _cloudModel = info['cloud'] == true ? '${info['model']}' : null);
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     }
@@ -111,10 +115,29 @@ class _ModelsScreenState extends State<ModelsScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('Llama on this phone')),
+        appBar: AppBar(title: const Text('Tutor AI')),
         body: ListView(padding: const EdgeInsets.all(16), children: [
-          const Text('The tutor runs entirely on this phone with Meta\'s Llama 3.2. '
-              'Questions and profiles are written here; no cloud AI sees them.'),
+          Text('Where the tutor runs', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          SegmentedButton<String>(
+            segments: [
+              const ButtonSegment(value: 'llama', icon: Icon(Icons.phone_android), label: Text('This phone · Llama')),
+              ButtonSegment(value: 'cloud', icon: const Icon(Icons.cloud_outlined), label: const Text('Meta cloud · Muse'),
+                  enabled: _cloudModel != null || Api.engine == 'cloud'),
+            ],
+            selected: {Api.engine},
+            onSelectionChanged: (v) async {
+              await Api.setEngine(v.first);
+              setState(() {});
+            },
+          ),
+          const SizedBox(height: 8),
+          Text(Api.engine == 'cloud'
+              ? 'Questions go to the class server, which asks Meta\'s ${_cloudModel ?? 'Muse Spark'}. Needs internet.'
+              : 'Questions are answered on this phone by Meta\'s Llama 3.2; works without internet.'
+                  '${_cloudModel == null ? ' (This server has no Meta cloud model set up.)' : ''}'),
+          const Divider(height: 32),
+          Text('Llama on this phone', style: Theme.of(context).textTheme.titleMedium),
           if (_ram > 0)
             Text('This phone: ${(_ram / 1e9).toStringAsFixed(1)} GB RAM',
                 style: Theme.of(context).textTheme.bodySmall),

@@ -131,7 +131,9 @@ class _RoomScreenState extends State<RoomScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('End the class?'),
-        content: const Text('The transcript closes. Llama on this phone then learns your teaching style from it.'),
+        content: Text(Api.engine == 'cloud'
+            ? 'The transcript closes. Meta\'s Muse Spark then learns your teaching style from it.'
+            : 'The transcript closes. Llama on this phone then learns your teaching style from it.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
           FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('End class')),
@@ -142,6 +144,11 @@ class _RoomScreenState extends State<RoomScreen> {
     _stopCaptions();
     await Api.end(widget.id);
     await _pull();
+    if (Api.engine == 'cloud') {
+      // /end already started the server's profile update with Muse Spark.
+      if (mounted) toast(context, 'Muse Spark is learning your teaching style');
+      return;
+    }
     if (!await Llama.hasModel()) {
       if (mounted) toast(context, 'Download Llama to let the tutor learn your style');
       return;
@@ -165,7 +172,8 @@ class _RoomScreenState extends State<RoomScreen> {
   Future<void> _profileStudentOnce() async {
     final prefs = await SharedPreferences.getInstance();
     final flag = 'profiled_${Api.base}_${widget.id}';
-    if (prefs.getBool(flag) == true || _lines.isEmpty || !await Llama.hasModel()) return;
+    // In cloud mode the server profiled every student when the class ended.
+    if (Api.engine == 'cloud' || prefs.getBool(flag) == true || _lines.isEmpty || !await Llama.hasModel()) return;
     setState(() => _working = 'Llama is getting to know how you learn…');
     try {
       final pack = await Api.pack(widget.id);
@@ -185,6 +193,13 @@ class _RoomScreenState extends State<RoomScreen> {
       _streamed = '';
     });
     try {
+      if (Api.engine == 'cloud') {
+        await Api.ask(widget.id, question);
+        _ask.clear();
+        await _loadQuestions();
+        if (mounted) setState(() => _thinking = false);
+        return;
+      }
       final pack = await Api.pack(widget.id);
       final lines = (pack['lines'] as List).cast<Map<String, dynamic>>().map(Line.fromJson).toList();
       final answers = (pack['teacher_answers'] as List)
@@ -324,14 +339,15 @@ class _RoomScreenState extends State<RoomScreen> {
           onRefresh: _loadQuestions,
           child: ListView(padding: const EdgeInsets.all(16), children: [
             if (!_teacher)
-              Text('Your tutor learned from $_teacherName and runs on this phone with Llama. '
+              Text('Your tutor learned from $_teacherName and runs '
+                  '${Api.engine == 'cloud' ? "in Meta's cloud with Muse Spark" : 'on this phone with Llama'}. '
                   "If the class didn't cover something, $_teacherName gets your question.",
                   style: Theme.of(context).textTheme.bodySmall),
             if (_thinking)
               Card(
                 child: ListTile(
                   leading: const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2)),
-                  title: Text(_streamed.isEmpty ? 'Llama is reading the class…' : _streamed),
+                  title: Text(_streamed.isEmpty ? (Api.engine == 'cloud' ? 'Muse Spark is reading the class…' : 'Llama is reading the class…') : _streamed),
                 ),
               ),
             if (_questions.isEmpty && !_thinking)

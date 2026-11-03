@@ -114,8 +114,11 @@ async def _llm(system: str, user: str) -> str:
     if not TUTOR_API_KEY:
         raise HTTPException(503, "The tutor is not configured")
     client = AsyncOpenAI(api_key=TUTOR_API_KEY, base_url=TUTOR_BASE_URL)
+    # Meta's Muse Spark "is tuned for the default of 1.0" and its docs say to
+    # steer with instructions instead (dev.meta.ai/docs/protocols/chat-completions).
+    extra = {} if TUTOR_MODEL.startswith("muse-") else {"temperature": 0.3}
     resp = await client.chat.completions.create(
-        model=TUTOR_MODEL, temperature=0.3,
+        model=TUTOR_MODEL, **extra,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
     )
     return (resp.choices[0].message.content or "").strip()
@@ -354,6 +357,12 @@ def _question_out(q: TutorQuestion) -> dict:
 
 class Ask(BaseModel):
     question: str
+
+
+@app.get("/api/tutor")
+async def tutor_info():
+    """Whether this server has a cloud AI, so the app can offer it."""
+    return {"cloud": bool(TUTOR_API_KEY), "model": TUTOR_MODEL if TUTOR_API_KEY else None}
 
 
 @router.post("/{session_id}/ask")

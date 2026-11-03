@@ -3,20 +3,23 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// The class server (class_tutor on the laptop). It stores classes, lines,
-/// questions and profiles; it never sees the model or runs any AI for the app.
+/// The class server. It stores classes, lines, questions and profiles. With
+/// [engine] 'llama' all AI runs on the phone; with 'cloud' the server asks its
+/// own model (Meta's Muse Spark) through /ask.
 class Api {
   Api._();
 
   static String base = '';
   static String key = '';
   static String name = '';
+  static String engine = 'llama';
 
   static Future<bool> restore() async {
     final p = await SharedPreferences.getInstance();
     base = p.getString('base') ?? '';
     key = p.getString('key') ?? '';
     name = p.getString('name') ?? '';
+    engine = p.getString('engine') ?? 'llama';
     return base.isNotEmpty && key.isNotEmpty;
   }
 
@@ -95,6 +98,19 @@ class Api {
   static Future<void> record(int id, String question, String answer, bool fromClass) =>
       _send('POST', '/api/classes/$id/questions',
           {'question': question, 'ai_answer': answer, 'from_class': fromClass});
+
+  static Future<void> setEngine(String e) async {
+    engine = e;
+    await (await SharedPreferences.getInstance()).setString('engine', e);
+  }
+
+  /// {"cloud": bool, "model": "muse-spark-1.3" | null}
+  static Future<Map<String, dynamic>> tutorInfo() async =>
+      await _send('GET', '/api/tutor') as Map<String, dynamic>;
+
+  /// The server's model answers, or sends the question to the teacher.
+  static Future<void> ask(int id, String question) =>
+      _send('POST', '/api/classes/$id/ask', {'question': question});
 
   static Future<List<Map<String, dynamic>>> inbox() async =>
       (await _send('GET', '/api/classes/inbox/waiting') as List).cast<Map<String, dynamic>>();
