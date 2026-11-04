@@ -26,6 +26,7 @@ class _RoomScreenState extends State<RoomScreen> {
   int _last = 0;
   List<Map<String, dynamic>> _questions = [];
   List<Map<String, dynamic>> _files = [];
+  List<Map<String, dynamic>> _tasks = [];
   Timer? _poll;
 
   bool _captions = false;
@@ -66,6 +67,7 @@ class _RoomScreenState extends State<RoomScreen> {
     await _pull();
     await _loadQuestions();
     _loadFiles();
+    _loadTasks();
     _poll = Timer.periodic(const Duration(seconds: 2), (_) => _pull());
     if (!_teacher && !_live) _profileStudentOnce();
   }
@@ -301,6 +303,47 @@ class _RoomScreenState extends State<RoomScreen> {
     );
   }
 
+  Future<void> _loadTasks() async {
+    try {
+      final t = await Api.tasks(widget.id);
+      if (mounted) setState(() => _tasks = t);
+    } catch (_) {}
+  }
+
+  Future<void> _addTask() async {
+    final title = TextEditingController(), due = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('New task'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(controller: title, autofocus: true, decoration: const InputDecoration(labelText: 'What to do')),
+          TextField(controller: due, decoration: const InputDecoration(labelText: 'Due (optional)')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await Api.addTask(title.text, due: due.text, sessionId: widget.id);
+      await _loadTasks();
+    } catch (e) {
+      if (mounted) toast(context, e);
+    }
+  }
+
+  Future<void> _toggleTask(Map<String, dynamic> t) async {
+    try {
+      await Api.setTaskStatus(t['id'] as int, t['status'] == 'done' ? 'open' : 'done');
+      await _loadTasks();
+    } catch (e) {
+      if (mounted) toast(context, e);
+    }
+  }
+
   Future<void> _loadFiles() async {
     try {
       final f = await Api.files(widget.id);
@@ -332,6 +375,26 @@ class _RoomScreenState extends State<RoomScreen> {
   }
 
   Widget _transcriptTab() => Column(children: [
+        ExpansionTile(
+          leading: const Icon(Icons.task_alt),
+          title: Text('Tasks (${_tasks.where((t) => t['status'] != 'done').length} open)'),
+          children: [
+            for (final t in _tasks)
+              CheckboxListTile(
+                dense: true,
+                value: t['status'] == 'done',
+                onChanged: (_) => _toggleTask(t),
+                title: Text('${t['title']}'),
+                subtitle: Text([
+                  if (t['due'] != null) 'due ${t['due']}',
+                  '${t['status']}'.replaceAll('_', ' '),
+                  '${t['owner']} via ${t['source']}',
+                  if (t['result'] != null) '↳ ${t['result']}',
+                ].join(' · ')),
+              ),
+            TextButton.icon(onPressed: _addTask, icon: const Icon(Icons.add), label: const Text('Add task')),
+          ],
+        ),
         ExpansionTile(
           leading: const Icon(Icons.attach_file),
           title: Text('Files (${_files.length})'),

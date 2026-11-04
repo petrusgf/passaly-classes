@@ -118,6 +118,29 @@ class TutorQuestion(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
+class Task(Base):
+    """Something to do, from a class or meeting (or just the person's own):
+    added in the app, by the assistant, or by an agent over MCP. Agents read
+    it from memory (tasks/<id>.md), do it, and report back with a result."""
+    __tablename__ = "task"
+
+    id = Column(ID, primary_key=True, autoincrement=True)
+    session_id = Column(
+        ID, ForeignKey("class_session.id", ondelete="CASCADE"), index=True,
+    )  # None: a personal task, seen only by its owner
+    owner_id = Column(Text, nullable=False, index=True)
+    owner_name = Column(Text, nullable=False)
+    title = Column(Text, nullable=False)
+    details = Column(Text)
+    assignee = Column(Text)  # free text: "Ana", "Claude Code", …
+    due = Column(Text)  # as said: "Friday", "2026-11-07"
+    status = Column(Text, nullable=False, default="open")  # open | in_progress | done
+    result = Column(Text)  # what whoever did it reports back
+    source = Column(Text, nullable=False, default="app")  # app | assistant | agent
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
 class SessionFile(Base):
     """A document someone added to a class or meeting. The original stays on
     disk for download; its text goes into the session's shared memory."""

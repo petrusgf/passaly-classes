@@ -32,4 +32,18 @@ void main() {
     expect('x'.allMatches(p).length, lessThan(2600));
     expect(p.trimRight().endsWith('Assistant:'), isTrue);
   });
+
+  test('Llama can add a task, to a meeting or for the user alone', () {
+    final r = readAssistant('Done.\n'
+        'ACTION {"type":"add_task","title":"Send the deck","due":"Friday","session_id":12}\n'
+        'ACTION {"type":"add_task","title":"Call the bank","session_id":"twelve"}\n'
+        'ACTION {"type":"add_task","title":"  "}');
+    expect(r.actions, [
+      {'type': 'add_task', 'title': 'Send the deck', 'due': 'Friday', 'session_id': 12},
+      {'type': 'add_task', 'title': 'Call the bank'},
+    ]);
+    final p = localAssistantPrompt(name: 'Ana', now: 'now', memory: const [], history: const [],
+        sessions: const [(id: 12, title: 'Q4 launch')]);
+    expect(p.contains('SESSIONS: 12: Q4 launch'), isTrue);
+  });
 }

@@ -53,12 +53,18 @@ class _AssistantScreenState extends State<AssistantScreen> {
       if (_cloud) {
         final r = await Api.assistant(history, now);
         reply = '${r['reply']}';
-        actions = [for (final a in (r['actions'] as List)) ?validAction(a as Map)];
+        actions = [
+          for (final a in (r['actions'] as List).cast<Map>())
+            if (a['type'] == 'task_added') a.cast<String, dynamic>() else ?validAction(a),
+        ];
       } else {
         final memory = await Api.searchMemory(text).catchError((_) => <Map<String, dynamic>>[]);
+        final sessions = await Api.classes()
+            .then((cs) => [for (final c in cs) (id: c['id'] as int, title: '${c['title']}')])
+            .catchError((_) => <({int id, String title})>[]);
         final sub = Llama.partials.listen((d) => setState(() => _streamed += d));
         final raw = await Llama.generate(
-            localAssistantPrompt(name: Api.name, now: now, memory: memory, history: history));
+            localAssistantPrompt(name: Api.name, now: now, memory: memory, history: history, sessions: sessions));
         await sub.cancel();
         final r = readAssistant(raw);
         reply = r.reply;
@@ -67,6 +73,13 @@ class _AssistantScreenState extends State<AssistantScreen> {
         // at once, as the cloud assistant does.
         for (final a in actions.where((a) => a['type'] == 'save_note')) {
           await Api.saveNote('${a['text']}');
+        }
+        // A task goes straight into the task list too, as with the cloud assistant.
+        for (var i = 0; i < actions.length; i++) {
+          final a = actions[i];
+          if (a['type'] != 'add_task') continue;
+          final t = await Api.addTask('${a['title']}', due: a['due'] as String?, sessionId: a['session_id'] as int?);
+          actions[i] = {'type': 'task_added', ...t};
         }
       }
       setState(() => _turns.add(_Turn('assistant', reply.isEmpty ? 'Done.' : reply, actions)));
@@ -111,6 +124,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
           'Add to calendar'
         ),
       'share_text' => (Icons.share, 'Share', '${a['text']}', 'Share…'),
+      'task_added' => (Icons.task_alt, 'Task added', '${a['title']}${a['due'] == null ? '' : ' · due ${a['due']}'}', ''),
       _ => (Icons.bookmark_added, 'Saved to memory', '${a['text']}', ''),
     };
     return Card(

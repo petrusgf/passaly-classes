@@ -23,6 +23,17 @@ Map<String, dynamic>? validAction(Map raw) {
         'duration_minutes': m is int && m > 0 && m <= 24 * 60 ? m : 30,
         'description': '${raw['description'] ?? ''}',
       };
+    case 'add_task':
+      final title = '${raw['title'] ?? ''}'.trim();
+      if (title.isEmpty) return null;
+      final due = '${raw['due'] ?? ''}'.trim();
+      final sid = raw['session_id'];
+      return {
+        'type': 'add_task',
+        'title': title.length > 200 ? title.substring(0, 200) : title,
+        if (due.isNotEmpty) 'due': due,
+        if (sid is int) 'session_id': sid,
+      };
     case 'share_text':
     case 'save_note':
       final text = '${raw['text'] ?? ''}'.trim();
@@ -46,6 +57,7 @@ String localAssistantPrompt({
   required String now,
   required List<Map<String, dynamic>> memory,
   required List<({String role, String text})> history,
+  List<({int id, String title})> sessions = const [],
 }) {
   // ponytail: Llama's context on the phone is 4096 tokens, so memory is cut
   // to about 2500 characters and the chat to the last six turns.
@@ -65,7 +77,11 @@ To do something for the user, add one line per task, exactly like these:
 ACTION {"type":"add_calendar_event","title":"...","start":"2026-11-07T09:00:00-08:00","duration_minutes":30,"description":"..."}
 ACTION {"type":"share_text","text":"..."}
 ACTION {"type":"save_note","text":"..."}
+ACTION {"type":"add_task","title":"...","due":"...","session_id":12}
+A task from a class or meeting takes its session_id from SESSIONS; leave it out for a personal task.
 Use the same UTC offset as Now. Reply briefly, in the user's language.
+
+SESSIONS: ${sessions.isEmpty ? 'none' : sessions.take(10).map((s) => '${s.id}: ${s.title}').join('; ')}
 
 MEMORY:
 ${pages.isEmpty ? '(nothing found)' : pages.join('\n')}

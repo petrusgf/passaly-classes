@@ -107,6 +107,22 @@ class Api {
 
   static Future<void> revokeMcpToken(int id) => _send('DELETE', '/api/mcp/tokens/$id');
 
+  /// Tasks I can see: one class or meeting's, or (no id) all of mine.
+  static Future<List<Map<String, dynamic>>> tasks([int? sessionId]) async =>
+      (await _cachedGet('/api/tasks${sessionId == null ? '' : '?session_id=$sessionId'}') as List)
+          .cast<Map<String, dynamic>>();
+
+  static Future<Map<String, dynamic>> addTask(String title, {String? due, String? assignee, int? sessionId}) async =>
+      await _send('POST', '/api/tasks', {
+        'title': title,
+        if (due != null && due.isNotEmpty) 'due': due,
+        if (assignee != null && assignee.isNotEmpty) 'assignee': assignee,
+        if (sessionId != null) 'session_id': sessionId,
+      }) as Map<String, dynamic>;
+
+  static Future<void> setTaskStatus(int id, String status) =>
+      _send('PATCH', '/api/tasks/$id', {'status': status});
+
   static Future<List<Map<String, dynamic>>> files(int id) async =>
       (await _send('GET', '/api/classes/$id/files') as List).cast<Map<String, dynamic>>();
 

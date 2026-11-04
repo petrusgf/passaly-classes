@@ -229,6 +229,15 @@ async function room(id) {
           <input type="file" id="fileIn" accept=".pdf,.txt,.md" hidden></label></div>
       <div class="small text-body-secondary mb-2">Everyone here can read them, and the assistant uses them.</div>
       <div id="files" class="small"></div></div></div>
+    <div class="card shadow-sm mb-3"><div class="card-body">
+      <h2 class="h6">Tasks</h2>
+      <div class="small text-body-secondary mb-2">Everyone here sees them; connected AI agents can pick them up and report back.</div>
+      <div id="tasks" class="small mb-2"></div>
+      <form id="taskF" class="row g-2">
+        <div class="col-7"><input class="form-control form-control-sm" name="title" required maxlength="200" placeholder="New task, e.g. Send the deck"></div>
+        <div class="col-3"><input class="form-control form-control-sm" name="due" maxlength="60" placeholder="Due"></div>
+        <div class="col-2"><button class="btn btn-sm btn-outline-primary w-100">Add</button></div>
+      </form></div></div>
     ${teacher ? `<div class="input-group input-group-sm mb-3"><span class="input-group-text">Invite link</span>
       <input class="form-control" readonly value="${esc(invite)}"><button class="btn btn-outline-secondary" id="copy">Copy</button></div>` : ''}
     <div class="row g-4">
@@ -286,6 +295,14 @@ async function room(id) {
     e.target.value = ''; renderFiles(id);
   };
   renderFiles(id);
+  $('#taskF').onsubmit = async e => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    try { await api('POST', '/api/tasks', {title: f.title, due: f.due || null, session_id: id}); e.target.reset(); }
+    catch (x) { alert(x.message); }
+    renderTasks(id);
+  };
+  renderTasks(id);
   await pullLines(id); renderQuestions(id, teacher);
   timers.push(setInterval(() => pullLines(id), 2000));
   timers.push(setInterval(() => renderQuestions(id, teacher), 10000));
@@ -302,6 +319,22 @@ async function pullLines(id) {
   if (!box.children.length) box.innerHTML = '<div class="text-body-secondary small" id="empty">No lines yet.</div>';
   else $('#empty')?.remove();
   if (atEnd) box.scrollTop = box.scrollHeight;
+}
+
+async function renderTasks(id) {
+  const ts = await api('GET', `/api/tasks?session_id=${id}`).catch(() => []);
+  const badge = {open: 'secondary', in_progress: 'warning', done: 'success'};
+  $('#tasks').innerHTML = ts.length ? ts.map(t => `<div class="border-top py-1">
+    <label class="d-flex gap-2 align-items-start mb-0"><input class="form-check-input mt-1" type="checkbox" data-task="${t.id}" ${t.status === 'done' ? 'checked' : ''}>
+      <span class="me-auto"><strong>${esc(t.title)}</strong>${t.due ? ` · due ${esc(t.due)}` : ''}${t.assignee ? ` · ${esc(t.assignee)}` : ''}
+        <span class="badge text-bg-${badge[t.status] || 'secondary'}">${t.status.replace('_', ' ')}</span>
+        <span class="text-body-secondary">· ${esc(t.owner)} via ${esc(t.source)}</span>
+        ${t.result ? `<div class="text-body-secondary" style="white-space:pre-wrap">↳ ${esc(t.result)}</div>` : ''}</span></label></div>`).join('')
+    : '<span class="text-body-secondary">No tasks yet.</span>';
+  $('#tasks').querySelectorAll('[data-task]').forEach(b => b.onchange = async () => {
+    await api('PATCH', `/api/tasks/${b.dataset.task}`, {status: b.checked ? 'done' : 'open'}).catch(x => alert(x.message));
+    renderTasks(id);
+  });
 }
 
 async function renderFiles(id) {

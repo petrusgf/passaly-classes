@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import memory
 from models import (
-    ClassLine, ClassMember, ClassSession, LearnerProfile, McpToken, Person, SessionFile, TutorQuestion,
+    ClassLine, ClassMember, ClassSession, LearnerProfile, McpToken, Person, SessionFile, Task, TutorQuestion,
     create_tables, get_session_factory,
 )
 
@@ -647,6 +647,149 @@ async def memory_note(body: Note, user: AnswerUser = Depends(get_current_user)):
     return await _save_note(user, body.text)
 
 
+
+# --- tasks: one directory, mirrored into memory so agents can read and do them ----------
+
+TASK_STATUSES = ("open", "in_progress", "done")
+TASK_SOURCES = ("app", "assistant", "agent")
+
+
+def _task_out(t: Task) -> dict:
+    return {"id": t.id, "session_id": t.session_id, "title": t.title, "details": t.details,
+            "assignee": t.assignee, "due": t.due, "status": t.status, "result": t.result,
+            "source": t.source, "owner": t.owner_name,
+            "created_at": t.created_at.isoformat(), "updated_at": t.updated_at.isoformat()}
+
+
+def _task_project(t: Task) -> str:
+    return memory.session_project(t.session_id) if t.session_id else memory.person_project(t.owner_id)
+
+
+async def _remember_task(db, t: Task):
+    """tasks/<id>.md: the task as an agent should read it, rewritten on every change."""
+    where = "Personal task"
+    if t.session_id:
+        s = await db.get(ClassSession, t.session_id)
+        where = f"From the {s.kind} \"{s.title}\" ({s.created_at:%Y-%m-%d})"
+    rows = [f"- Status: **{t.status}**", f"- Task id: {t.id}", f"- Added by: {t.owner_name} (via {t.source})"]
+    if t.assignee:
+        rows.append(f"- For: {t.assignee}")
+    if t.due:
+        rows.append(f"- Due: {t.due}")
+    body = (f"# Task: {t.title}\n\n{where}.\n\n" + "\n".join(rows) +
+            (f"\n\n## Details\n{t.details}" if t.details else "") +
+            (f"\n\n## Result\n{t.result}" if t.result else "") +
+            f"\n\nAgents: when you work on it, call update_task with task_id {t.id} "
+            "(status in_progress, then done with a result).\n")
+    await memory.write(_task_project(t), f"tasks/{t.id}.md", body)
+
+
+async def _task_scope(db, user: AnswerUser, t: Task):
+    """A session's tasks are its members'; a personal task only its owner's."""
+    if t.session_id:
+        await _member(db, t.session_id, user)
+    elif t.owner_id != user.id:
+        raise HTTPException(404, "Task not found")
+
+
+async def _add_task(db, user: AnswerUser, title, details=None, assignee=None, due=None,
+                    session_id=None, source="app") -> Task:
+    if session_id is not None:
+        if not isinstance(session_id, int):
+            raise HTTPException(400, "session_id is a number")
+        await _member(db, session_id, user)
+    t = Task(session_id=session_id, owner_id=user.id, owner_name=_name(user),
+             title=_clean(str(title or ""), 200, "Title"),
+             details=_clean_block(str(details), MAX_ANSWER, "Details") if details else None,
+             assignee=_clean(str(assignee), 60, "For") if assignee else None,
+             due=_clean(str(due), 60, "Due") if due else None,
+             source=source if source in TASK_SOURCES else "app")
+    db.add(t)
+    await db.commit()
+    await _remember_task(db, t)
+    return t
+
+
+async def _update_task(db, user: AnswerUser, task_id, status=None, result=None) -> Task:
+    t = await db.get(Task, task_id) if isinstance(task_id, int) else None
+    if not t:
+        raise HTTPException(404, "Task not found")
+    await _task_scope(db, user, t)
+    if status is not None:
+        if status not in TASK_STATUSES:
+            raise HTTPException(400, f"status is one of {', '.join(TASK_STATUSES)}")
+        t.status = status
+    if result is not None:
+        t.result = _clean_block(str(result), MAX_ANSWER, "Result")
+    t.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await _remember_task(db, t)
+    return t
+
+
+async def _my_tasks(db, user: AnswerUser, status=None, session_id=None) -> list[Task]:
+    member_of = select(ClassMember.session_id).where(ClassMember.user_id == user.id)
+    q = select(Task).where((Task.session_id.in_(member_of)) |
+                           ((Task.session_id.is_(None)) & (Task.owner_id == user.id)))
+    if status:
+        q = q.where(Task.status == status)
+    if session_id is not None:
+        q = q.where(Task.session_id == session_id)
+    return (await db.execute(q.order_by(Task.id.desc()).limit(200))).scalars().all()
+
+
+class NewTask(BaseModel):
+    title: str
+    details: str | None = None
+    assignee: str | None = None
+    due: str | None = None
+    session_id: int | None = None
+
+
+class TaskChange(BaseModel):
+    status: str | None = None
+    result: str | None = None
+
+
+@app.post("/api/tasks", status_code=201)
+async def create_task(body: NewTask, user: AnswerUser = Depends(get_current_user),
+                      db: AsyncSession = Depends(get_db)):
+    return _task_out(await _add_task(db, user, body.title, body.details, body.assignee, body.due,
+                                     body.session_id, "app"))
+
+
+@app.get("/api/tasks")
+async def list_tasks(status: str | None = None, session_id: int | None = None,
+                     user: AnswerUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    return [_task_out(t) for t in await _my_tasks(db, user, status, session_id)]
+
+
+@app.patch("/api/tasks/{task_id}")
+async def change_task(task_id: int, body: TaskChange, user: AnswerUser = Depends(get_current_user),
+                      db: AsyncSession = Depends(get_db)):
+    return _task_out(await _update_task(db, user, task_id, body.status, body.result))
+
+
+async def _run_server_tool(db, user: AnswerUser, name: str, args: dict, source: str,
+                           session_id: int | None = None):
+    """The tools that touch shared data, the same for the assistant and MCP.
+    Returns the result, or None when `name` is not one of them."""
+    if name == "search_memory":
+        return {"hits": await _search_memory(db, user, str(args.get("query", "")), session_id)}
+    if name == "save_note":
+        return await _save_note(user, str(args.get("text", "")))
+    if name == "add_task":
+        return _task_out(await _add_task(db, user, args.get("title"), args.get("details"), args.get("assignee"),
+                                         args.get("due"), args.get("session_id"), source))
+    if name == "list_tasks":
+        sid = args.get("session_id")
+        return {"tasks": [_task_out(t) for t in await _my_tasks(
+            db, user, args.get("status") or None, sid if isinstance(sid, int) else None)]}
+    if name == "update_task":
+        return _task_out(await _update_task(db, user, args.get("task_id"), args.get("status"), args.get("result")))
+    return None
+
+
 # --- the assistant: Muse with tools; the phone runs the device ones -----------------
 
 # Run here: they touch the shared memory.
@@ -657,6 +800,23 @@ SERVER_TOOLS = {
                       "properties": {"query": {"type": "string"}}, "required": ["query"]},
     "save_note": {"description": "Save a note to the user's memory.",
                   "properties": {"text": {"type": "string"}}, "required": ["text"]},
+    "add_task": {"description": "Add a task to the task list: to a class or meeting (session_id, "
+                                "everyone in it sees it) or the user's own (no session_id).",
+                 "properties": {"title": {"type": "string"}, "details": {"type": "string"},
+                                "assignee": {"type": "string", "description": "who does it, if said"},
+                                "due": {"type": "string", "description": "as said, or YYYY-MM-DD"},
+                                "session_id": {"type": "integer"}},
+                 "required": ["title"]},
+    "list_tasks": {"description": "List tasks the user can see, newest first.",
+                   "properties": {"status": {"type": "string", "enum": ["open", "in_progress", "done"]},
+                                  "session_id": {"type": "integer"}},
+                   "required": []},
+    "update_task": {"description": "Change a task's status (open, in_progress, done) and/or record "
+                                   "its result: what was done, links, output.",
+                    "properties": {"task_id": {"type": "integer"},
+                                   "status": {"type": "string", "enum": ["open", "in_progress", "done"]},
+                                   "result": {"type": "string"}},
+                    "required": ["task_id"]},
 }
 # Proposed to the phone, which runs them only after the user confirms.
 DEVICE_TOOLS = {
@@ -679,9 +839,11 @@ ASSISTANT_SYSTEM = (
     "You are {name}'s Passaly assistant for their classes and meetings. Now: {now}.\n"
     "Before answering about anything said or decided in a class or meeting, call "
     "search_memory, and answer only from what it returns; if it finds nothing, say so.\n"
-    "When the user wants something done, call add_calendar_event, share_text or "
-    "save_note. Calendar and share run on the user's phone after they confirm, so "
-    "say what you proposed. Reply briefly, in the user's language."
+    "When the user wants something done, call add_calendar_event, share_text, "
+    "save_note or add_task. A task from a class or meeting gets its session_id from "
+    "this list (newest first): {sessions}. Calendar and share run on the user's "
+    "phone after they confirm, so say what you proposed. Reply briefly, in the "
+    "user's language."
 )
 MAX_TOOL_ROUNDS = 4
 RECENT_RECAPS = 3
@@ -731,8 +893,12 @@ async def assistant(body: AssistantAsk, user: AnswerUser = Depends(get_current_u
     turns = [t for t in body.messages if t.role in ("user", "assistant")][-12:]
     if not turns or turns[-1].role != "user":
         raise HTTPException(400, "The last message must be the user's")
+    recent = (await db.execute(
+        select(ClassSession).join(ClassMember, ClassMember.session_id == ClassSession.id)
+        .where(ClassMember.user_id == user.id).order_by(ClassSession.id.desc()).limit(10))).scalars().all()
+    sessions = "; ".join(f"{s.id}: {s.kind} \"{s.title}\" {s.created_at:%Y-%m-%d}" for s in recent) or "none"
     messages = [{"role": "system", "content": ASSISTANT_SYSTEM.format(
-        name=_name(user), now=(body.now or datetime.now(timezone.utc).isoformat())[:40])}]
+        name=_name(user), now=(body.now or datetime.now(timezone.utc).isoformat())[:40], sessions=sessions)}]
     messages += [{"role": t.role, "content": _clean_block(t.content, MAX_QUESTION, "Message")} for t in turns]
     await db.commit()  # no transaction across the AI calls
     actions, sources = [], []
@@ -754,12 +920,13 @@ async def assistant(body: AssistantAsk, user: AnswerUser = Depends(get_current_u
                 args = {}
             name = c.function.name
             try:
-                if name == "search_memory":
-                    hits = await _search_memory(db, user, str(args.get("query", "")), body.session_id)
-                    sources += [{"title": h["title"], "project": h["project"]} for h in hits]
-                    result = {"hits": hits} if hits else {"hits": [], "note": "Nothing in memory."}
-                elif name == "save_note":
-                    result = await _save_note(user, str(args.get("text", "")))
+                if (result := await _run_server_tool(db, user, name, args, "assistant", body.session_id)) is not None:
+                    if name == "search_memory":
+                        sources += [{"title": h["title"], "project": h["project"]} for h in result["hits"]]
+                        if not result["hits"]:
+                            result["note"] = "Nothing in memory."
+                    elif name == "add_task":
+                        actions.append({"type": "task_added", **result})  # shown in the chat, nothing to confirm
                 elif (action := _device_action(name, args)):
                     actions.append(action)
                     result = {"status": "proposed; runs on the phone after the user confirms"}
@@ -936,7 +1103,7 @@ MCP_ONLY_TOOLS = {
 MCP_TOOLS = [{"name": n, "description": t["description"],
               "inputSchema": {"type": "object", "properties": t["properties"], "required": t["required"]}}
              for n, t in {**SERVER_TOOLS, **MCP_ONLY_TOOLS}.items()]
-MCP_WRITE_TOOLS = {"save_note", "add_document"}
+MCP_WRITE_TOOLS = {"save_note", "add_document", "add_task", "update_task"}
 URI_PREFIX = "passaly://"
 
 
@@ -1034,10 +1201,8 @@ async def mcp(request: Request, db: AsyncSession = Depends(get_db)):
         if name in MCP_WRITE_TOOLS and not t.can_write:
             return _rpc(id_, {"content": [{"type": "text", "text": "This token is read-only."}], "isError": True})
         try:
-            if name == "search_memory":
-                out = {"hits": await _search_memory(db, user, str(args.get("query", "")))}
-            elif name == "save_note":
-                out = await _save_note(user, str(args.get("text", "")))
+            if (out := await _run_server_tool(db, user, name, args, "agent")) is not None:
+                pass
             elif name == "list_files":
                 sid = args.get("session_id")
                 out = {"files": await _list_files(db, user, sid if isinstance(sid, int) else None)}

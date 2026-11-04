@@ -280,7 +280,8 @@ with TestClient(app.app) as c:
     host_key = mcp_token(host, write=True)["token"]
     assert rpc(ana_key, "initialize")["result"]["capabilities"] == {"tools": {}, "resources": {}}
     names = [t["name"] for t in rpc(ana_key, "tools/list")["result"]["tools"]]
-    assert names == ["search_memory", "save_note", "list_files", "read_file", "add_document"]
+    assert names == ["search_memory", "save_note", "add_task", "list_tasks", "update_task",
+                     "list_files", "read_file", "add_document"]
 
     # list_files / resources: only Ana's own projects
     _, listed = tool(ana_key, "list_files", {})
@@ -307,7 +308,8 @@ with TestClient(app.app) as c:
 
     # read-only tokens: no write tools listed, and calling one is refused
     eve_tools = [t["name"] for t in rpc(eve_key, "tools/list")["result"]["tools"]]
-    assert "save_note" not in eve_tools and "add_document" not in eve_tools and "read_file" in eve_tools
+    assert not {"save_note", "add_document", "add_task", "update_task"} & set(eve_tools)
+    assert {"read_file", "list_tasks"} <= set(eve_tools)
     assert tool(eve_key, "save_note", {"text": "x"}) == (True, "This token is read-only.")
 
     # revoked or expired: refused; someone else's token cannot be revoked
@@ -322,6 +324,63 @@ with TestClient(app.app) as c:
                                      (app._token_hash(old),)).connection.commit()
     assert c.post("/mcp", headers={"Authorization": f"Bearer {old}"},
                   json={"jsonrpc": "2.0", "id": 1, "method": "ping"}).status_code == 401
+
+# --- tasks: added in a meeting, kept in memory, done by an agent ---------------------
+
+with TestClient(app.app) as c:
+    mid = mt["id"]
+    # In the meeting, someone adds a task; everyone in it sees it, outsiders don't.
+    t1 = c.post("/api/tasks", headers=ana, json={"title": "Send the deck", "due": "Friday",
+                                                  "assignee": "Ana", "session_id": mid}).json()
+    assert t1["status"] == "open" and t1["source"] == "app"
+    page = pages[(memory.session_project(mid), f"tasks/{t1['id']}.md")]
+    assert "# Task: Send the deck" in page and "Status: **open**" in page and f"task_id {t1['id']}" in page
+    assert [t["title"] for t in c.get("/api/tasks", headers=host).json()] == ["Send the deck"]
+    assert c.get("/api/tasks", headers=eve).json() == []
+    assert c.post("/api/tasks", headers=eve, json={"title": "x", "session_id": mid}).status_code == 404
+    assert c.patch(f"/api/tasks/{t1['id']}", headers=eve, json={"status": "done"}).status_code == 404
+    assert c.patch(f"/api/tasks/{t1['id']}", headers=ana, json={"status": "finished"}).status_code == 400
+    # A personal task is its owner's alone.
+    mine = c.post("/api/tasks", headers=eve, json={"title": "Eve's own"}).json()
+    assert mine["session_id"] is None and [t["title"] for t in c.get("/api/tasks", headers=eve).json()] == ["Eve's own"]
+    owners = [k[0] for k in pages if k[1] == f"tasks/{mine['id']}.md"]
+    assert len(owners) == 1 and owners[0].startswith("person-")
+
+    # The assistant adds a task from what was asked (Muse calls add_task).
+    seen_system = []
+
+    async def task_chat(messages, tools=None):
+        seen_system.append(messages[0]["content"])
+        if not any(m["role"] == "tool" for m in messages):
+            return NS(content="", tool_calls=[NS(id="9", function=NS(name="add_task", arguments=_json.dumps(
+                {"title": "Book the launch room", "due": "2026-11-10", "session_id": mid})))])
+        return NS(content="Added the task to the Q4 budget meeting.", tool_calls=None)
+
+    app._chat = task_chat
+    r = c.post("/api/assistant", headers=ana, json={"messages": [
+        {"role": "user", "content": "Add a task in the meeting: book the launch room by Nov 10"}]}).json()
+    assert r["actions"][0]["type"] == "task_added" and r["actions"][0]["source"] == "assistant"
+    assert f'{mid}: meeting "Q3 budget"' in seen_system[0]  # Muse is told the session ids
+
+    # An agent over MCP: lists open tasks, starts one, finishes it with a result.
+    agent = c.post("/api/mcp/tokens", headers=host, json={"name": "OpenCode", "can_write": True}).json()["token"]
+    _, listed = tool(agent, "list_tasks", {"status": "open"})
+    assert {t["title"] for t in listed["tasks"]} == {"Send the deck", "Book the launch room"}
+    tid = next(t["id"] for t in listed["tasks"] if t["title"] == "Send the deck")
+    assert tool(agent, "update_task", {"task_id": tid, "status": "in_progress"})[1]["status"] == "in_progress"
+    err, done = tool(agent, "update_task", {"task_id": tid, "status": "done", "result": "Sent to all, link: deck.pdf"})
+    assert not err and done["status"] == "done"
+    page = pages[(memory.session_project(mid), f"tasks/{tid}.md")]
+    assert "Status: **done**" in page and "## Result\nSent to all, link: deck.pdf" in page
+    _, by_agent = tool(agent, "add_task", {"title": "Draft the release notes", "session_id": mid})
+    assert by_agent["source"] == "agent"
+    # read-only tokens can list but not change
+    ro = c.post("/api/mcp/tokens", headers=ana, json={"name": "Claude"}).json()["token"]
+    assert tool(ro, "list_tasks", {})[0] is False
+    assert tool(ro, "update_task", {"task_id": tid, "status": "open"}) == (True, "This token is read-only.")
+    # the task pages are files too
+    _, files = tool(agent, "list_files", {"session_id": mid})
+    assert any(f["uri"].endswith(f"/tasks/{tid}.md") for f in files["files"])
 
 memory.URL = ""
 
