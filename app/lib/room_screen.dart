@@ -249,9 +249,19 @@ class _RoomScreenState extends State<RoomScreen> {
         answer = "That wasn't in this class, so I've sent your question to $_teacherName. "
             "You'll see her answer here.";
       }
-      await Api.record(widget.id, question, answer, fromClass);
+      final sent = await Api.record(widget.id, question, answer, fromClass);
       _ask.clear();
-      await _loadQuestions();
+      if (sent) {
+        await _loadQuestions();
+      } else {
+        // No connection: show it now; it reaches the server (and the teacher) later.
+        setState(() => _questions = [
+              {'question': question, 'ai_answer': answer, 'from_class': fromClass,
+               'status': fromClass ? 'answered' : 'waiting_teacher', 'teacher_answer': null},
+              ..._questions,
+            ]);
+        if (mounted) toast(context, "No internet: saved on this phone, it's sent when you're back online");
+      }
     } catch (e) {
       if (mounted) toast(context, e);
     }

@@ -9,6 +9,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 class Api {
   Api._();
 
+  /// Swapped for a MockClient in tests.
+  static http.Client client = http.Client();
+
   static String base = '';
   static String key = '';
   static String name = '';
@@ -58,7 +61,7 @@ class Api {
       ..headers['X-Person-Key'] = key;
     if (body != null) req.body = jsonEncode(body);
     final res = await http.Response.fromStream(
-        await req.send().timeout(const Duration(seconds: 90)));
+        await client.send(req).timeout(const Duration(seconds: 90)));
     final data = res.body.isEmpty ? null : jsonDecode(utf8.decode(res.bodyBytes));
     if (res.statusCode >= 400) {
       throw ApiError(data is Map ? '${data['detail']}' : 'Server error ${res.statusCode}');
@@ -66,8 +69,28 @@ class Api {
     return data;
   }
 
+  /// A GET that keeps its last answer on the phone and falls back to it with
+  /// no connection, so classes, their material and the Llama tutor work
+  /// offline. A server error (ApiError) is never hidden behind the copy.
+  static Future<dynamic> _cachedGet(String path) async {
+    final p = await SharedPreferences.getInstance();
+    final k = 'cache $base $key $path';
+    try {
+      final data = await _send('GET', path);
+      await p.setString(k, jsonEncode(data));
+      flushPending(); // back online: send what waited
+      return data;
+    } on ApiError {
+      rethrow;
+    } catch (_) {
+      final saved = p.getString(k);
+      if (saved == null) rethrow;
+      return jsonDecode(saved);
+    }
+  }
+
   static Future<List<Map<String, dynamic>>> classes() async =>
-      (await _send('GET', '/api/classes') as List).cast<Map<String, dynamic>>();
+      (await _cachedGet('/api/classes') as List).cast<Map<String, dynamic>>();
 
   /// [kind] is 'class' or 'meeting'.
   static Future<Map<String, dynamic>> create(String title, String subject, String lang,
@@ -123,7 +146,7 @@ class Api {
   }
 
   static Future<Map<String, dynamic>> get(int id) async =>
-      await _send('GET', '/api/classes/$id') as Map<String, dynamic>;
+      await _cachedGet('/api/classes/$id') as Map<String, dynamic>;
 
   static Future<Map<String, dynamic>> lines(int id, int after) async =>
       await _send('GET', '/api/classes/$id/lines?after=$after') as Map<String, dynamic>;
@@ -133,14 +156,56 @@ class Api {
   static Future<void> end(int id) => _send('POST', '/api/classes/$id/end');
 
   static Future<Map<String, dynamic>> pack(int id) async =>
-      await _send('GET', '/api/classes/$id/pack') as Map<String, dynamic>;
+      await _cachedGet('/api/classes/$id/pack') as Map<String, dynamic>;
 
   static Future<List<Map<String, dynamic>>> questions(int id) async =>
-      (await _send('GET', '/api/classes/$id/questions') as List).cast<Map<String, dynamic>>();
+      (await _cachedGet('/api/classes/$id/questions') as List).cast<Map<String, dynamic>>();
 
-  static Future<void> record(int id, String question, String answer, bool fromClass) =>
-      _send('POST', '/api/classes/$id/questions',
-          {'question': question, 'ai_answer': answer, 'from_class': fromClass});
+  /// Saves a question the phone answered. With no connection it waits on the
+  /// phone (returns false) and goes out with the next call that reaches the
+  /// server, so the teacher still gets what the class didn't cover.
+  static Future<bool> record(int id, String question, String answer, bool fromClass) async {
+    final body = {'question': question, 'ai_answer': answer, 'from_class': fromClass};
+    try {
+      await _send('POST', '/api/classes/$id/questions', body);
+      return true;
+    } on ApiError {
+      rethrow;
+    } catch (_) {
+      final p = await SharedPreferences.getInstance();
+      final q = p.getStringList(_pendingKey) ?? [];
+      await p.setStringList(_pendingKey, [...q, jsonEncode({'id': id, ...body})]);
+      return false;
+    }
+  }
+
+  static String get _pendingKey => 'pending $base $key';
+  static bool _flushing = false;
+
+  /// Sends queued questions in order; stops at the first one that can't go yet.
+  static Future<void> flushPending() async {
+    if (_flushing) return;
+    _flushing = true;
+    try {
+      final p = await SharedPreferences.getInstance();
+      var q = p.getStringList(_pendingKey) ?? [];
+      while (q.isNotEmpty) {
+        final r = jsonDecode(q.first) as Map<String, dynamic>;
+        try {
+          await _send('POST', '/api/classes/${r['id']}/questions',
+              {'question': r['question'], 'ai_answer': r['ai_answer'], 'from_class': r['from_class']});
+        } on ApiError {
+          // The server refused it (e.g. the class is gone): drop it, keep going.
+        } catch (_) {
+          break; // still offline
+        }
+        q = q.sublist(1);
+        await p.setStringList(_pendingKey, q);
+      }
+    } finally {
+      _flushing = false;
+    }
+  }
 
   static Future<void> setEngine(String e) async {
     engine = e;
