@@ -607,8 +607,12 @@ async def _my_projects(db, user: AnswerUser, session_id: int | None = None) -> l
 
 
 async def _search_memory(db, user: AnswerUser, query: str, session_id: int | None = None) -> list[dict]:
+    """Keyword search; when nothing matches, the newest recaps instead, so a
+    question worded unlike the meeting ("what do I deliver?") still has context."""
     query = _clean(query, 300, "Search")
-    return await memory.search(await _my_projects(db, user, session_id), query)
+    projects = await _my_projects(db, user, session_id)
+    return (await memory.search(projects, query)
+            or await memory.recent(projects[1:], "recap.md", RECENT_RECAPS))
 
 
 async def _save_note(user: AnswerUser, text: str) -> dict:
@@ -638,7 +642,9 @@ async def memory_note(body: Note, user: AnswerUser = Depends(get_current_user)):
 
 # Run here: they touch the shared memory.
 SERVER_TOOLS = {
-    "search_memory": {"description": "Search the user's classes, meetings, recaps and notes.",
+    "search_memory": {"description": "Keyword search over the user's classes, meetings, recaps and "
+                                     "notes. Use a few specific words likely said in the meeting "
+                                     "(names, topics); with no match it returns the latest recaps.",
                       "properties": {"query": {"type": "string"}}, "required": ["query"]},
     "save_note": {"description": "Save a note to the user's memory.",
                   "properties": {"text": {"type": "string"}}, "required": ["text"]},
@@ -669,6 +675,7 @@ ASSISTANT_SYSTEM = (
     "say what you proposed. Reply briefly, in the user's language."
 )
 MAX_TOOL_ROUNDS = 4
+RECENT_RECAPS = 3
 # ponytail: per-process daily count; a table when there is more than one worker.
 _assist_count: dict[tuple[str, str], int] = {}
 

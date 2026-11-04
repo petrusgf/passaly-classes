@@ -89,3 +89,20 @@ async def search(projects: list[str], query: str, limit: int = 6) -> list[dict]:
                     "title": page.get("title") or h.get("title", ""),
                     "text": (page.get("body") or "")[:2000]})
     return out
+
+
+async def recent(projects: list[str], path: str, limit: int) -> list[dict]:
+    """`path` (e.g. recap.md) from the first `limit` projects that have it."""
+    if not URL:
+        return []
+    out = []
+    for p in projects:
+        if len(out) >= limit:
+            break
+        try:
+            page = await _call("memory_read_page", {"project": p, "path": path})
+        except Exception:  # noqa: BLE001  (no such page or project yet)
+            continue
+        out.append({"project": p, "path": path, "title": page.get("title", ""),
+                    "text": (page.get("body") or "")[:2000]})
+    return out

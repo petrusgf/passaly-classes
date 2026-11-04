@@ -162,6 +162,10 @@ with TestClient(app.app) as c:
     # memory search sees only your own classes and meetings
     assert c.get("/api/memory/search?q=deck", headers=ana).json()["hits"]
     assert c.get("/api/memory/search?q=deck", headers=eve).json()["hits"] == []
+    # no keyword match: the newest recaps instead, still only your own
+    fallback = c.get("/api/memory/search?q=deliverables", headers=ana).json()["hits"]
+    assert [h["path"] for h in fallback] == ["recap.md"]
+    assert c.get("/api/memory/search?q=deliverables", headers=eve).json()["hits"] == []
     assert c.post("/api/memory/notes", headers=eve, json={"text": "Eve's deck idea"}).status_code == 201
     assert not any("Eve" in h["text"] for h in c.get("/api/memory/search?q=deck", headers=ana).json()["hits"])
 
@@ -238,5 +242,11 @@ async def overlap():
         return r
 
 assert asyncio.run(overlap()).status_code == 200
+
+# the image must carry every server module (memory.py was once left out)
+from pathlib import Path as _P  # noqa: E402
+
+_copy = next(l for l in (_P(__file__).parent / "Dockerfile").read_text().splitlines() if l.startswith("COPY app.py"))
+assert all(f.name in _copy for f in _P(__file__).parent.glob("*.py") if f.name != "test_app.py"), _copy
 
 print("class tutor: ok")
