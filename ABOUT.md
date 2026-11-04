@@ -1,0 +1,131 @@
+# Passaly Classes: what it does
+
+**Live classes and meetings, a recap afterwards, and an AI assistant that
+remembers them, running in Meta's cloud (Muse Spark) or entirely on the phone
+(Llama 3.2).**
+
+Built for a hackathon. The story behind it: Siena, 10, is a Canadian girl
+living in Brazil. Her teacher, Giovanna, is in Canada, 11,000 km away. They
+meet over a video call, but class time is short and questions come later,
+when the teacher is asleep. Passaly Classes turns every class into a
+personal tutor that teaches the way Giovanna teaches, and sends Giovanna only
+the questions her class did not answer.
+
+The same idea works for meetings: everyone leaves with a recap, decisions and
+action items, and an assistant that can answer "what did we decide?" weeks
+later.
+
+---
+
+## What happens, step by step
+
+### 1. Before: start a class or a meeting
+The teacher (or meeting host) creates a **class** or a **meeting** in the app
+or on the web page and shares the invite link. The call itself happens on any
+app (Meet, Zoom…); Passaly Classes never records audio or video.
+
+### 2. During: live captions become the transcript
+Each person's own phone or browser listens to **its own speaker only** and
+turns their voice into text. Every line goes to the server labeled with who
+said it, so everyone sees one shared, live transcript.
+
+### 3. After: the recap and the profiles
+When the host ends it, the AI writes:
+
+- **A recap**: summary, decisions, action items (who, what, by when), open
+  questions. It uses only what was said and never invents owners or dates.
+- **Profiles** (classes): how this teacher explains things, and how each
+  student learns. They get better with every class.
+
+### 4. Later: the tutor (classes)
+The student asks a question about the class.
+- **Covered in class** → the tutor answers the way the teacher did, with her
+  examples, adapted to the student.
+- **Not covered** → the tutor does not guess. The question goes to the
+  teacher's inbox. Her answer reaches the student **and joins that class's
+  material**, so the next student gets it straight away.
+
+### 5. Anytime: the assistant (classes and meetings)
+"What do I have to deliver, and when? Put it in my calendar."
+
+The assistant searches everything the person took part in, answers from it,
+and proposes **tasks**:
+
+| Task | What happens |
+|---|---|
+| Add a calendar event | Opens the phone's calendar with the event filled in |
+| Share text | Opens the share sheet (email, WhatsApp…) with the recap |
+| Save a note | Saves it to the person's memory |
+
+**Nothing runs until the user taps it**, and the calendar still asks for
+confirmation.
+
+---
+
+## Two brains, one memory
+
+```
+                ┌──────────── ai-memory (shared memory) ─────────────┐
+                │  transcripts · recaps · teacher answers · profiles │
+                │  · notes: one space per class/meeting, per person   │
+                └───────▲──────────────────▲──────────────────▲──────┘
+                        │                  │                  │
+        Meta cloud: Muse Spark      This phone: Llama 3.2    Any AI app on a
+        (tool calling)              (on-device, offline)     computer (MCP plugin)
+```
+
+- **Muse Spark** (Meta's cloud model, through the Meta Model API) writes the
+  recaps and profiles, answers in the browser, and runs the assistant's tasks
+  through tool calling.
+- **Llama 3.2 1B or 3B** (Meta's open model, through Google's LiteRT-LM) runs
+  **inside the phone**: no internet needed for the AI, and the questions
+  never leave the device. The phone writes the recap and the profiles itself,
+  and proposes the same tasks.
+- **ai-memory** ([akitaonrails/ai-memory](https://github.com/akitaonrails/ai-memory))
+  keeps the shared memory, so switching brains changes who thinks, not what
+  is remembered.
+- **The plugin**: `https://passaly.com/classes/mcp` lets any AI app that
+  supports MCP plugins (LM Studio, Claude Desktop, Muse Code…) search and add
+  to *your* memory, with your own key.
+
+In the app, the choice is one switch: **This phone · Llama** or
+**Meta cloud · Muse**.
+
+---
+
+## Privacy and safety
+
+- **No audio or video is stored**, only the text of what was said.
+- **You only see what you took part in.** Memory is kept per class or
+  meeting and per person. A search, in the app or through the plugin, only
+  looks at your own spaces.
+- **On-device mode**: with Llama, the AI runs on the phone, so the
+  student's questions never go to a cloud AI.
+- **The tutor doesn't guess.** Anything the class didn't cover goes to a
+  human, the teacher.
+- **Tasks need a tap**, and calendar events are confirmed in the calendar app.
+- **Llama 3.2** is used under Meta's Llama 3.2 Community License; the app
+  shows "Built with Llama" and the license.
+
+---
+
+## What's in this repository
+
+| Part | What it is |
+|---|---|
+| `app.py`, `models.py`, `memory.py` | The server (Python, FastAPI, SQLite): classes, transcript, questions, recaps, the assistant, the MCP plugin |
+| `static/index.html` | The web page: classes and meetings in the browser, with live captions (Chrome or Edge) |
+| `app/` | The Android app (Flutter): captions, the tutor, the assistant, Llama on the phone |
+| `test_app.py`, `app/test/` | Checks for the whole flow |
+| `README.md` | How to run, build and deploy it |
+
+## Limits today
+
+- **Android only** for the app. The web page works on any computer with
+  Chrome or Edge.
+- **Llama on the phone is weaker at tasks** than Muse. Use the 3B model for
+  the assistant.
+- **Memory search matches words.** When nothing matches, the assistant reads
+  your latest recaps instead.
+- **Accounts are a name and a key** for the demo. The plan is to move it into
+  Passaly, with real logins, after the hackathon.
