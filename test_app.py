@@ -200,10 +200,22 @@ with TestClient(app.app) as c:
     assert c.post("/api/assistant", headers=ana, json={"messages": [
         {"role": "assistant", "content": "hi"}]}).status_code == 400
 
-    # the MCP plugin: the person's key is the bearer
-    ana_key = ana["X-Person-Key"]
+    # the MCP plugin: an MCP token is the bearer, never the login key
+    def mcp_token(who, write=False):
+        return c.post("/api/mcp/tokens", headers=who, json={"name": "Claude", "can_write": write}).json()
+
+    made = mcp_token(ana, write=True)
+    ana_key = made["token"]
+    assert ana_key.startswith("pcm_") and made["can_write"] is True
+    assert all("token" not in t for t in c.get("/api/mcp/tokens", headers=ana).json())  # shown once
+    import sqlite3  # noqa: E402
+    db_file = os.environ["DATABASE_URL"].split("///", 1)[1]
+    assert sqlite3.connect(db_file).execute("select count(*) from mcp_token where token_hash = ?",
+                                            (ana_key,)).fetchone()[0] == 0  # only the hash is stored
     bearer = {"Authorization": f"Bearer {ana_key}", "Accept": "application/json, text/event-stream"}
     assert c.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"}).status_code == 401
+    login_key = {"Authorization": f"Bearer {ana['X-Person-Key']}"}
+    assert c.post("/mcp", headers=login_key, json={"jsonrpc": "2.0", "id": 1, "method": "ping"}).status_code == 401
     assert c.post("/mcp", headers={**bearer, "Origin": "https://evil.example"},
                   json={"jsonrpc": "2.0", "id": 1, "method": "ping"}).status_code == 403
     assert c.get("/mcp", headers=bearer).status_code == 405
@@ -264,6 +276,8 @@ with TestClient(app.app) as c:
         r = rpc(who_key, "tools/call", {"name": name, "arguments": args})["result"]
         return r["isError"], _json.loads(r["content"][0]["text"]) if not r["isError"] else r["content"][0]["text"]
 
+    eve_key = mcp_token(eve)["token"]          # read-only (the default)
+    host_key = mcp_token(host, write=True)["token"]
     assert rpc(ana_key, "initialize")["result"]["capabilities"] == {"tools": {}, "resources": {}}
     names = [t["name"] for t in rpc(ana_key, "tools/list")["result"]["tools"]]
     assert names == ["search_memory", "save_note", "list_files", "read_file", "add_document"]
@@ -273,7 +287,6 @@ with TestClient(app.app) as c:
     uris = [f["uri"] for f in listed["files"]]
     assert f"passaly://session-{mid}/recap.md" in uris and f"passaly://session-{mid}/files/{fid}-Launch-plan.md" in uris
     assert all(u.startswith((f"passaly://session-", f"passaly://person-")) for u in uris)
-    eve_key = eve["X-Person-Key"]
     _, eve_listed = tool(eve_key, "list_files", {})
     assert not any(f"session-{mid}" in f["uri"] for f in eve_listed["files"])
     assert rpc(ana_key, "resources/list")["result"]["resources"][0]["mimeType"] == "text/markdown"
@@ -288,9 +301,27 @@ with TestClient(app.app) as c:
     # add_document: a member adds one; others in the meeting can read it; outsiders cannot add
     err, doc = tool(ana_key, "add_document", {"session_id": mid, "name": "Pricing notes", "text": "Price: $4.99\nTrial: 7 days"})
     assert not err and doc["name"] == "Pricing-notes.md"
-    _, back = tool(host["X-Person-Key"], "read_file", {"uri": doc["uri"]})
+    _, back = tool(host_key, "read_file", {"uri": doc["uri"]})
     assert "Trial: 7 days" in back["text"]
     assert tool(eve_key, "add_document", {"session_id": mid, "name": "x", "text": "y"})[0] is True
+
+    # read-only tokens: no write tools listed, and calling one is refused
+    eve_tools = [t["name"] for t in rpc(eve_key, "tools/list")["result"]["tools"]]
+    assert "save_note" not in eve_tools and "add_document" not in eve_tools and "read_file" in eve_tools
+    assert tool(eve_key, "save_note", {"text": "x"}) == (True, "This token is read-only.")
+
+    # revoked or expired: refused; someone else's token cannot be revoked
+    tid = c.get("/api/mcp/tokens", headers=eve).json()[0]["id"]
+    assert c.delete(f"/api/mcp/tokens/{tid}", headers=ana).status_code == 404
+    assert c.delete(f"/api/mcp/tokens/{tid}", headers=eve).status_code == 200
+    assert c.post("/mcp", headers={"Authorization": f"Bearer {eve_key}"},
+                  json={"jsonrpc": "2.0", "id": 1, "method": "ping"}).status_code == 401
+    assert c.get("/api/mcp/tokens", headers=eve).json() == []
+    old = mcp_token(eve)["token"]
+    sqlite3.connect(db_file).execute("update mcp_token set expires_at = '2020-01-01 00:00:00' where token_hash = ?",
+                                     (app._token_hash(old),)).connection.commit()
+    assert c.post("/mcp", headers={"Authorization": f"Bearer {old}"},
+                  json={"jsonrpc": "2.0", "id": 1, "method": "ping"}).status_code == 401
 
 memory.URL = ""
 

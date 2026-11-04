@@ -137,6 +137,22 @@ class SessionFile(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
+class McpToken(Base):
+    """A token for the MCP plugin, separate from the login key: shown once,
+    kept only as its SHA-256, read-only unless allowed, revocable, expiring."""
+    __tablename__ = "mcp_token"
+
+    id = Column(ID, primary_key=True, autoincrement=True)
+    person_id = Column(Text, nullable=False, index=True)
+    name = Column(Text, nullable=False)
+    token_hash = Column(Text, nullable=False, unique=True)
+    can_write = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    last_used_at = Column(DateTime(timezone=True))
+    revoked_at = Column(DateTime(timezone=True))
+
+
 class LearnerProfile(Base):
     """What the AI learned about one person: a teacher's way of teaching, or a
     student's way of learning. Rewritten as a whole after each class."""

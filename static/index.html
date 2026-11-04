@@ -119,8 +119,34 @@ async function home() {
           <input class="form-control mb-3" name="call_url" placeholder="Video call link (Meet, Zoom), optional">
           <button class="btn btn-primary w-100">Create</button>
         </form><div class="text-danger small mt-2" id="err"></div>
+      </div></div>
+      <div class="card shadow-sm mt-4"><div class="card-body">
+        <h2 class="h5">Connect an AI app (MCP)</h2>
+        <p class="small text-body-secondary">Claude, LM Studio, Muse Code… can read your classes, meetings and
+          files through <code>${esc(location.origin + ROOT)}/mcp</code>. Give each app its own token:
+          it is shown once, read-only unless you allow writing, and you can revoke it here.</p>
+        <form id="tokF" class="mb-2">
+          <input class="form-control form-control-sm mb-2" name="name" required maxlength="60" placeholder="Which app, e.g. Claude">
+          <div class="form-check small mb-2"><input class="form-check-input" type="checkbox" name="can_write" id="tokW">
+            <label class="form-check-label" for="tokW">Allow it to add notes and documents</label></div>
+          <button class="btn btn-sm btn-outline-primary">Create token</button></form>
+        <div id="tokNew"></div><div id="toks" class="small"></div>
       </div></div></div>
     </div>`;
+  $('#tokF').onsubmit = async e => {
+    e.preventDefault();
+    const name = e.target.name.value, can_write = e.target.can_write.checked;
+    try {
+      const t = await api('POST', '/api/mcp/tokens', {name, can_write});
+      $('#tokNew').innerHTML = `<div class="alert alert-warning small py-2">Copy it now; it will not be shown again.
+        <div class="input-group input-group-sm mt-1"><input class="form-control" readonly value="${esc(t.token)}" id="tokVal">
+        <button class="btn btn-outline-secondary" type="button" id="tokCopy">Copy</button></div>
+        <div class="mt-1">Send it as <code>Authorization: Bearer &lt;token&gt;</code>. Expires ${new Date(t.expires_at).toLocaleDateString()}.</div></div>`;
+      $('#tokCopy').onclick = () => navigator.clipboard.writeText($('#tokVal').value);
+      e.target.reset(); renderTokens();
+    } catch (x) { alert(x.message); }
+  };
+  renderTokens();
   $('#f').onsubmit = async e => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
@@ -134,6 +160,18 @@ async function home() {
       <span class="badge ${c.status === 'live' ? 'text-bg-danger' : 'text-bg-secondary'} align-self-center">${c.status}</span>
     </a>`).join('') : '<div class="text-body-secondary small">No classes yet.</div>';
   renderInbox();
+}
+
+async function renderTokens() {
+  const ts = await api('GET', '/api/mcp/tokens').catch(() => []);
+  $('#toks').innerHTML = ts.map(t => `<div class="d-flex align-items-center gap-2 border-top py-1">
+    <span class="me-auto"><strong>${esc(t.name)}</strong> · ${t.can_write ? 'read and write' : 'read only'}
+      · ${t.last_used_at ? 'used ' + new Date(t.last_used_at).toLocaleDateString() : 'never used'}</span>
+    <button class="btn btn-sm btn-link text-danger p-0" data-revoke="${t.id}">Revoke</button></div>`).join('');
+  $('#toks').querySelectorAll('[data-revoke]').forEach(b => b.onclick = async () => {
+    if (!confirm('Revoke this token? The app using it loses access at once.')) return;
+    await api('DELETE', `/api/mcp/tokens/${b.dataset.revoke}`); renderTokens();
+  });
 }
 
 async function renderInbox() {

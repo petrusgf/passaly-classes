@@ -13,6 +13,7 @@ auth.get_current_user, and the Person table goes away.
 """
 
 import asyncio
+import hashlib
 import io
 import json
 import os
@@ -32,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import memory
 from models import (
-    ClassLine, ClassMember, ClassSession, LearnerProfile, Person, SessionFile, TutorQuestion,
+    ClassLine, ClassMember, ClassSession, LearnerProfile, McpToken, Person, SessionFile, TutorQuestion,
     create_tables, get_session_factory,
 )
 
@@ -852,10 +853,71 @@ async def download_file(session_id: int, file_id: int, user: AnswerUser = Depend
     return FileResponse(FILES_DIR / str(s.id) / f"{f.id}{Path(f.name).suffix}", media_type=f.mime,
                         filename=f.name, content_disposition_type="attachment")
 
+
+# --- MCP tokens: what an AI app uses instead of the login key ------------------------
+
+MCP_TOKEN_DAYS = 90
+MCP_TOKENS_PER_PERSON = 10
+
+
+def _token_hash(token: str) -> str:
+    # ponytail: plain SHA-256 is enough for 256-bit random tokens; a slow hash
+    # only matters for guessable secrets like passwords.
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _token_out(t: McpToken) -> dict:
+    return {"id": t.id, "name": t.name, "can_write": t.can_write, "created_at": t.created_at.isoformat(),
+            "expires_at": t.expires_at.isoformat(),
+            "last_used_at": t.last_used_at.isoformat() if t.last_used_at else None}
+
+
+class NewMcpToken(BaseModel):
+    name: str
+    can_write: bool = False
+
+
+@app.post("/api/mcp/tokens", status_code=201)
+async def create_mcp_token(body: NewMcpToken, user: AnswerUser = Depends(get_current_user),
+                           db: AsyncSession = Depends(get_db)):
+    """The token is in this response only; the server keeps its hash."""
+    now = datetime.now(timezone.utc)
+    active = (await db.execute(select(func.count()).select_from(McpToken).where(
+        McpToken.person_id == user.id, McpToken.revoked_at.is_(None), McpToken.expires_at > now))).scalar()
+    if active >= MCP_TOKENS_PER_PERSON:
+        raise HTTPException(409, f"You have {MCP_TOKENS_PER_PERSON} tokens; revoke one first")
+    token = "pcm_" + secrets.token_urlsafe(32)
+    t = McpToken(person_id=user.id, name=_clean(body.name, 60, "Name"), token_hash=_token_hash(token),
+                 can_write=body.can_write, expires_at=now + timedelta(days=MCP_TOKEN_DAYS))
+    db.add(t)
+    await db.commit()
+    return {**_token_out(t), "token": token}
+
+
+@app.get("/api/mcp/tokens")
+async def my_mcp_tokens(user: AnswerUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    now = datetime.now(timezone.utc)
+    rows = (await db.execute(select(McpToken).where(
+        McpToken.person_id == user.id, McpToken.revoked_at.is_(None), McpToken.expires_at > now)
+        .order_by(McpToken.id.desc()))).scalars().all()
+    return [_token_out(t) for t in rows]
+
+
+@app.delete("/api/mcp/tokens/{token_id}")
+async def revoke_mcp_token(token_id: int, user: AnswerUser = Depends(get_current_user),
+                           db: AsyncSession = Depends(get_db)):
+    t = await db.get(McpToken, token_id)
+    if not t or t.person_id != user.id:
+        raise HTTPException(404, "Token not found")
+    t.revoked_at = t.revoked_at or datetime.now(timezone.utc)
+    await db.commit()
+    return {"ok": True}
+
 # --- the plugin: memory over MCP for any local AI app (LM Studio, Claude, Muse Code) --
 # Streamable HTTP, JSON responses only (modelcontextprotocol.io/specification/
-# 2025-06-18/basic/transports). The bearer is the person's own key, so a plugin
-# sees exactly what that person sees; ai-memory's root token never leaves here.
+# 2025-06-18/basic/transports). The bearer is one of the person's MCP tokens
+# (never the login key), so a plugin sees exactly what that person sees, and
+# writes only with a token allowed to; ai-memory's root token never leaves here.
 
 MCP_ORIGINS = {o for o in os.getenv("MCP_ALLOWED_ORIGINS", "https://passaly.com").split(",") if o}
 MCP_ONLY_TOOLS = {
@@ -874,6 +936,7 @@ MCP_ONLY_TOOLS = {
 MCP_TOOLS = [{"name": n, "description": t["description"],
               "inputSchema": {"type": "object", "properties": t["properties"], "required": t["required"]}}
              for n, t in {**SERVER_TOOLS, **MCP_ONLY_TOOLS}.items()]
+MCP_WRITE_TOOLS = {"save_note", "add_document"}
 URI_PREFIX = "passaly://"
 
 
@@ -909,6 +972,11 @@ async def _read_uri(db, user: AnswerUser, uri: str) -> dict | None:
     return await memory.read(project, path)
 
 
+def _aware(t: datetime) -> datetime:
+    """SQLite hands datetimes back without their timezone; they were saved in UTC."""
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
 def _rpc(id_, result=None, error=None):
     return JSONResponse({"jsonrpc": "2.0", "id": id_, **({"error": error} if error else {"result": result})})
 
@@ -924,11 +992,18 @@ async def mcp(request: Request, db: AsyncSession = Depends(get_db)):
     if origin and origin not in MCP_ORIGINS:  # the spec's DNS-rebinding guard
         raise HTTPException(403, "Origin not allowed")
     auth = request.headers.get("authorization", "")
-    key = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
-    p = key and (await db.execute(select(Person).where(Person.key == key))).scalar_one_or_none()
-    if not p:
-        return JSONResponse({"error": "Use your Passaly Classes key as the bearer token"}, status_code=401)
+    token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    now = datetime.now(timezone.utc)
+    t = token and (await db.execute(select(McpToken).where(
+        McpToken.token_hash == _token_hash(token)))).scalar_one_or_none()
+    if not t or t.revoked_at or _aware(t.expires_at) <= now:
+        return JSONResponse({"error": "Create an MCP token in Passaly Classes and send it as the bearer"},
+                            status_code=401, headers={"WWW-Authenticate": "Bearer"})
+    p = await db.get(Person, int(t.person_id))
     user = AnswerUser(id=str(p.id), username=p.name, display_name=p.name)
+    if not t.last_used_at or now - _aware(t.last_used_at) > timedelta(minutes=5):
+        t.last_used_at = now  # ponytail: to the 5 minutes, not one write per request
+        await db.commit()
     try:
         msg = await request.json()
     except ValueError:
@@ -945,7 +1020,7 @@ async def mcp(request: Request, db: AsyncSession = Depends(get_db)):
     if method == "ping":
         return _rpc(id_, {})
     if method == "tools/list":
-        return _rpc(id_, {"tools": MCP_TOOLS})
+        return _rpc(id_, {"tools": [x for x in MCP_TOOLS if t.can_write or x["name"] not in MCP_WRITE_TOOLS]})
     if method == "resources/list":
         return _rpc(id_, {"resources": await _list_files(db, user)})
     if method == "resources/read":
@@ -956,6 +1031,8 @@ async def mcp(request: Request, db: AsyncSession = Depends(get_db)):
         return _rpc(id_, {"contents": [{"uri": uri, "mimeType": "text/markdown", "text": page["text"]}]})
     if method == "tools/call":
         name, args = params.get("name"), params.get("arguments") or {}
+        if name in MCP_WRITE_TOOLS and not t.can_write:
+            return _rpc(id_, {"content": [{"type": "text", "text": "This token is read-only."}], "isError": True})
         try:
             if name == "search_memory":
                 out = {"hits": await _search_memory(db, user, str(args.get("query", "")))}

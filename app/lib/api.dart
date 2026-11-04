@@ -75,6 +75,15 @@ class Api {
       await _send('POST', '/api/classes', {'title': title, 'subject': subject, 'lang': lang, 'kind': kind})
           as Map<String, dynamic>;
 
+  /// MCP tokens for AI apps. The token itself comes back only from create.
+  static Future<List<Map<String, dynamic>>> mcpTokens() async =>
+      (await _send('GET', '/api/mcp/tokens') as List).cast<Map<String, dynamic>>();
+
+  static Future<Map<String, dynamic>> createMcpToken(String name, bool canWrite) async =>
+      await _send('POST', '/api/mcp/tokens', {'name': name, 'can_write': canWrite}) as Map<String, dynamic>;
+
+  static Future<void> revokeMcpToken(int id) => _send('DELETE', '/api/mcp/tokens/$id');
+
   static Future<List<Map<String, dynamic>>> files(int id) async =>
       (await _send('GET', '/api/classes/$id/files') as List).cast<Map<String, dynamic>>();
 

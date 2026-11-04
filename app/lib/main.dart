@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'api.dart';
 import 'assistant_screen.dart';
+import 'connect_screen.dart';
 import 'models_screen.dart';
 import 'room_screen.dart';
 
@@ -217,13 +218,20 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ModelsScreen())),
             ),
             PopupMenuButton<String>(
-              onSelected: (_) async {
+              onSelected: (v) async {
+                if (v == 'mcp') {
+                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ConnectScreen()));
+                  return;
+                }
                 await Api.signOut();
                 if (context.mounted) {
                   Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const StartScreen()));
                 }
               },
-              itemBuilder: (_) => [PopupMenuItem(value: 'out', child: Text('Sign out (${Api.name})'))],
+              itemBuilder: (_) => [
+                const PopupMenuItem(value: 'mcp', child: Text('Connect an AI app')),
+                PopupMenuItem(value: 'out', child: Text('Sign out (${Api.name})')),
+              ],
             ),
           ],
         ),
