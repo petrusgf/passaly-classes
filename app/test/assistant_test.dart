@@ -19,7 +19,7 @@ void main() {
 
   test('local time carries its offset', () {
     final s = isoWithOffset(DateTime(2026, 11, 3, 20, 5, 9));
-    expect(DateTime.parse(s), DateTime(2026, 11, 3, 20, 5, 9));
+    expect(DateTime.parse(s).isAtSameMomentAs(DateTime(2026, 11, 3, 20, 5, 9)), isTrue);
     expect(RegExp(r'^2026-11-03T20:05:09[+-]\d\d:\d\d$').hasMatch(s), isTrue);
   });
 
