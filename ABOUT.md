@@ -84,9 +84,15 @@ confirmation.
 - **ai-memory** ([akitaonrails/ai-memory](https://github.com/akitaonrails/ai-memory))
   keeps the shared memory, so switching brains changes who thinks, not what
   is remembered.
-- **The plugin**: `https://passaly.com/classes/mcp` lets any AI app that
-  supports MCP plugins (LM Studio, Claude Desktop, Muse Code…) search and add
-  to *your* memory, with your own key.
+- **The plugin**: `https://passaly.com/classes/mcp` is an MCP server that
+  hosts *your* files: recaps, transcripts, answers, the documents added to
+  your classes and meetings, notes. Any AI app or cloud agent that supports
+  MCP (Claude, LM Studio, Muse Code…) can list, read, search and add to them,
+  with your own key, and only yours.
+
+### Files in a class or meeting
+Anyone in it can add a PDF, .txt or .md. Everyone in it can read it, and the
+tutor and the assistant use it to answer.
 
 In the app, the choice is one switch: **This phone · Llama** or
 **Meta cloud · Muse**.

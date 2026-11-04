@@ -93,12 +93,30 @@ tasks: calendar event, share text, save note. The same tasks for both brains:
 
 Calendar and share open the phone's own app, filled in, for the user to confirm.
 
+**Files**: anyone in a class or meeting can add a PDF, .txt or .md (up to
+10 MB) from the web page or the app. The original is kept for download
+(`/data/files` in the container); its text goes into the session's memory,
+so the tutor, the assistant and the MCP plugin can use it.
+
 ### The plugin: memory in any local AI app (MCP)
 
 `https://passaly.com/classes/mcp` is an MCP server (Streamable HTTP, JSON
-responses) with `search_memory` and `save_note`. Authenticate with your own
-Passaly Classes key as the bearer token; you see exactly what you see in the
-app. For example, in an MCP client config:
+responses) that hosts each person's files: recaps, transcripts, teacher
+answers, documents added to their classes and meetings, notes and profiles.
+
+| Tool | Does |
+|---|---|
+| `list_files` | Every file you can read (optionally one class or meeting), as `passaly://` URIs |
+| `read_file` | One file in full |
+| `search_memory` | Keyword search over all of it |
+| `save_note` | A note in your own memory |
+| `add_document` | A markdown document into one of your classes or meetings |
+
+The same files are MCP **resources** (`resources/list`, `resources/read`).
+Authenticate with your own Passaly Classes key as the bearer token; you see
+exactly what you see in the app, nothing of anyone else's. Cloud agents work
+too (Claude custom connectors: put the header under *Request headers*). For
+example, in an MCP client config:
 
     {"mcpServers": {"passaly": {"url": "https://passaly.com/classes/mcp",
       "headers": {"Authorization": "Bearer <your key>"}}}}
