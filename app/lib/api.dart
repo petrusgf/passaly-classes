@@ -117,7 +117,7 @@ class Api {
         'title': title,
         if (due != null && due.isNotEmpty) 'due': due,
         if (assignee != null && assignee.isNotEmpty) 'assignee': assignee,
-        if (sessionId != null) 'session_id': sessionId,
+        'session_id': ?sessionId,
       }) as Map<String, dynamic>;
 
   static Future<void> setTaskStatus(int id, String status) =>
