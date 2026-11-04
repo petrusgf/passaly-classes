@@ -58,7 +58,7 @@ class Api {
       ..headers['X-Person-Key'] = key;
     if (body != null) req.body = jsonEncode(body);
     final res = await http.Response.fromStream(
-        await req.send().timeout(const Duration(seconds: 15)));
+        await req.send().timeout(const Duration(seconds: 90)));
     final data = res.body.isEmpty ? null : jsonDecode(utf8.decode(res.bodyBytes));
     if (res.statusCode >= 400) {
       throw ApiError(data is Map ? '${data['detail']}' : 'Server error ${res.statusCode}');
@@ -69,9 +69,28 @@ class Api {
   static Future<List<Map<String, dynamic>>> classes() async =>
       (await _send('GET', '/api/classes') as List).cast<Map<String, dynamic>>();
 
-  static Future<Map<String, dynamic>> create(String title, String subject, String lang) async =>
-      await _send('POST', '/api/classes', {'title': title, 'subject': subject, 'lang': lang})
+  /// [kind] is 'class' or 'meeting'.
+  static Future<Map<String, dynamic>> create(String title, String subject, String lang,
+          [String kind = 'class']) async =>
+      await _send('POST', '/api/classes', {'title': title, 'subject': subject, 'lang': lang, 'kind': kind})
           as Map<String, dynamic>;
+
+  /// The host's recap, written on this phone by Llama.
+  static Future<void> saveRecap(int id, String text) => _send('PUT', '/api/classes/$id/recap', {'text': text});
+
+  /// The shared memory (ai-memory on the server): the pages that match, in full.
+  static Future<List<Map<String, dynamic>>> searchMemory(String q) async =>
+      ((await _send('GET', '/api/memory/search?q=${Uri.encodeQueryComponent(q)}') as Map)['hits'] as List)
+          .cast<Map<String, dynamic>>();
+
+  static Future<void> saveNote(String text) => _send('POST', '/api/memory/notes', {'text': text});
+
+  /// Cloud mode: Muse answers with tools. {"reply", "actions", "sources"}
+  static Future<Map<String, dynamic>> assistant(List<({String role, String text})> history, String now) async =>
+      await _send('POST', '/api/assistant', {
+        'messages': [for (final t in history) {'role': t.role, 'content': t.text}],
+        'now': now,
+      }) as Map<String, dynamic>;
 
   /// Accepts the invite link the web page shows, or just its code.
   static Future<Map<String, dynamic>> join(String linkOrCode) async {

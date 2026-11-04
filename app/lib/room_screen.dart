@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
+import 'assistant.dart';
 import 'llama.dart';
 import 'main.dart';
 import 'models_screen.dart';
@@ -36,6 +37,8 @@ class _RoomScreenState extends State<RoomScreen> {
   String? _working; // what Llama is busy with in the background, shown as a banner
 
   bool get _teacher => _info?['role'] == 'teacher';
+  bool get _meeting => _info?['kind'] == 'meeting';
+  String get _what => _meeting ? 'meeting' : 'class';
   bool get _live => _info?['status'] == 'live';
   String get _teacherName => '${_info?['teacher'] ?? 'the teacher'}';
 
@@ -130,13 +133,12 @@ class _RoomScreenState extends State<RoomScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('End the class?'),
-        content: Text(Api.engine == 'cloud'
-            ? 'The transcript closes. Meta\'s Muse Spark then learns your teaching style from it.'
-            : 'The transcript closes. Llama on this phone then learns your teaching style from it.'),
+        title: Text('End the $_what?'),
+        content: Text('The transcript closes. ${Api.engine == 'cloud' ? "Meta's Muse Spark" : 'Llama on this phone'} '
+            'then writes the recap${_meeting ? '' : ' and learns your teaching style'}.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('End class')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text('End $_what')),
         ],
       ),
     );
@@ -145,15 +147,28 @@ class _RoomScreenState extends State<RoomScreen> {
     await Api.end(widget.id);
     await _pull();
     if (Api.engine == 'cloud') {
-      // /end already started the server's profile update with Muse Spark.
-      if (mounted) toast(context, 'Muse Spark is learning your teaching style');
+      // /end already started the server's recap and profiles with Muse Spark.
+      if (mounted) toast(context, 'Muse Spark is writing the recap');
+      Future.delayed(const Duration(seconds: 30), _refreshInfo);
       return;
     }
     if (!await Llama.hasModel()) {
-      if (mounted) toast(context, 'Download Llama to let the tutor learn your style');
+      if (mounted) toast(context, 'Download Llama to get a recap');
       return;
     }
-    setState(() => _working = 'Llama is learning your teaching style…');
+    setState(() => _working = 'Llama is writing the recap…');
+    try {
+      final recap = await Llama.generate(recapPrompt(_what, '${_info!['title']}', _lines));
+      if (recap.isNotEmpty) await Api.saveRecap(widget.id, recap);
+      await _refreshInfo();
+    } catch (e) {
+      if (mounted) toast(context, 'Could not write the recap: $e');
+    }
+    if (_meeting) {
+      if (mounted) setState(() => _working = null);
+      return;
+    }
+    if (mounted) setState(() => _working = 'Llama is learning your teaching style…');
     try {
       final pack = await Api.pack(widget.id);
       final style = await Llama.generate(teacherStylePrompt('${pack['my_profile']}', _lines));
@@ -254,11 +269,11 @@ class _RoomScreenState extends State<RoomScreen> {
         appBar: AppBar(
           title: Text('${info['title']}', overflow: TextOverflow.ellipsis),
           actions: [
-            if (_teacher && _live) TextButton(onPressed: _end, child: const Text('End class')),
+            if (_teacher && _live) TextButton(onPressed: _end, child: Text('End $_what')),
           ],
           bottom: TabBar(tabs: [
-            Tab(text: _live ? 'Live class' : 'Transcript'),
-            Tab(text: _teacher ? 'Questions' : 'Tutor'),
+            Tab(text: _live ? 'Live' : 'Transcript'),
+            Tab(text: _teacher ? 'Questions' : (_meeting ? 'Ask' : 'Tutor')),
           ]),
         ),
         body: Column(children: [
@@ -274,7 +289,37 @@ class _RoomScreenState extends State<RoomScreen> {
     );
   }
 
+  Future<void> _refreshInfo() async {
+    try {
+      final info = await Api.get(widget.id);
+      if (mounted) setState(() => _info = info);
+    } catch (_) {}
+  }
+
   Widget _transcriptTab() => Column(children: [
+        if (_info!['recap'] != null)
+          Card(
+            margin: const EdgeInsets.all(12),
+            child: ExpansionTile(
+              initiallyExpanded: true,
+              leading: const Icon(Icons.summarize_outlined, color: brand),
+              title: const Text('Recap'),
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: SelectableText('${_info!['recap']}'),
+                ),
+                OverflowBar(children: [
+                  TextButton.icon(
+                    icon: const Icon(Icons.share),
+                    label: const Text('Share'),
+                    onPressed: () => const MethodChannel('classes/actions')
+                        .invokeMethod('share', {'text': '${_info!['title']}\n\n${_info!['recap']}'}),
+                  ),
+                ]),
+              ],
+            ),
+          ),
         if (_teacher)
           ListTile(
             dense: true,

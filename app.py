@@ -12,6 +12,7 @@ Moving into Passaly: the router goes to quiz-api as is, get_person becomes
 auth.get_current_user, and the Person table goes away.
 """
 
+import json
 import os
 import re
 import secrets
@@ -21,12 +22,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import memory
 from models import (
     ClassLine, ClassMember, ClassSession, LearnerProfile, Person, TutorQuestion,
     create_tables, get_session_factory,
@@ -47,6 +49,8 @@ MAX_ANSWER = 4000
 MAX_PACK_CHARS = 60000
 ASKS_PER_DAY = 50
 LANGS = {"en-US", "en-CA", "pt-BR", "es-ES", "fr-CA", "fr-FR"}
+KINDS = {"class", "meeting"}
+MAX_RECAP = 8000
 
 
 @asynccontextmanager
@@ -104,24 +108,39 @@ def _clean(raw, limit: int, what: str) -> str:
     return text
 
 
+def _clean_block(raw, limit: int, what: str) -> str:
+    """Like _clean, but keeps line breaks (markdown recaps, notes)."""
+    text = re.sub(r"[ \t]+", " ", raw or "").strip()
+    if not text:
+        raise HTTPException(400, f"{what} is empty")
+    if len(text) > limit:
+        raise HTTPException(400, f"{what} is longer than {limit} characters")
+    return text
+
+
 def _name(user: AnswerUser) -> str:
     return user.display_name or user.username
 
 
 # --- the AI ---------------------------------------------------------------------
 
-async def _llm(system: str, user: str) -> str:
+async def _chat(messages: list[dict], tools: list[dict] | None = None):
+    """One completion; returns the assistant message (content, tool_calls)."""
     if not TUTOR_API_KEY:
         raise HTTPException(503, "The tutor is not configured")
     client = AsyncOpenAI(api_key=TUTOR_API_KEY, base_url=TUTOR_BASE_URL)
     # Meta's Muse Spark "is tuned for the default of 1.0" and its docs say to
     # steer with instructions instead (dev.meta.ai/docs/protocols/chat-completions).
     extra = {} if TUTOR_MODEL.startswith("muse-") else {"temperature": 0.3}
-    resp = await client.chat.completions.create(
-        model=TUTOR_MODEL, **extra,
-        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-    )
-    return (resp.choices[0].message.content or "").strip()
+    if tools:
+        extra["tools"] = tools
+    resp = await client.chat.completions.create(model=TUTOR_MODEL, messages=messages, **extra)
+    return resp.choices[0].message
+
+
+async def _llm(system: str, user: str) -> str:
+    msg = await _chat([{"role": "system", "content": system}, {"role": "user", "content": user}])
+    return (msg.content or "").strip()
 
 
 def build_pack(session, lines, answered, teacher_style: str, student_profile: str) -> str:
@@ -168,6 +187,15 @@ STYLE_SYSTEM = (
     "of detail, language mix, tone. Update the profile with what this class "
     "shows. Reply with the profile only."
 )
+RECAP_SYSTEM = (
+    "You write the recap of a {kind} from its transcript, in the transcript's "
+    "language, as markdown with exactly these sections:\n"
+    "## Summary\n(at most 120 words)\n## Decisions\n## Action items\n"
+    "(one per line: '- Owner: task (due: date)', the due part only if it was said)\n"
+    "## Open questions\n"
+    "Write 'None.' under an empty section. Use only the transcript; never invent "
+    "owners, dates or decisions."
+)
 LEARNER_SYSTEM = (
     "You keep a short profile (max 120 words) of how one student learns: what "
     "confuses them, which explanations worked, their level, the language they "
@@ -189,20 +217,56 @@ async def _save_profile(db, user_id: str, kind: str, text: str):
         row.text, row.updated_at = text, datetime.now(timezone.utc)
     else:
         db.add(LearnerProfile(user_id=user_id, kind=kind, text=text))
+    title = "How I teach / host" if kind == "teacher" else "How I learn"
+    await memory.write(memory.person_project(user_id), f"profile-{kind}.md", f"# {title}\n\n{text}")
+
+
+def _transcript_page(s: ClassSession, members, lines) -> str:
+    who = ", ".join(f"{m.name} ({_role_label(s, m.role)})" for m in members)
+    body = "\n".join(f"- {l.name}: {l.text}" for l in lines) or "(empty)"
+    return (f"# {s.title}\n\n{s.kind.capitalize()} on {s.created_at:%Y-%m-%d}, "
+            f"{_role_label(s, 'teacher')}: {s.teacher_name}. People: {who}.\n\n## Transcript\n{body}\n")
+
+
+def _recap_page(s: ClassSession) -> str:
+    return f"# Recap: {s.title} ({s.created_at:%Y-%m-%d})\n\n{s.recap}\n"
+
+
+def _role_label(s: ClassSession, role: str) -> str:
+    if s.kind == "meeting":
+        return "host" if role == "teacher" else "participant"
+    return role
+
+
+async def _remember_session(db, s: ClassSession):
+    """The transcript (and recap, when there is one) into the shared memory."""
+    members = (await db.execute(select(ClassMember).where(
+        ClassMember.session_id == s.id).order_by(ClassMember.id))).scalars().all()
+    lines = (await db.execute(select(ClassLine).where(
+        ClassLine.session_id == s.id).order_by(ClassLine.id))).scalars().all()
+    project = memory.session_project(s.id)
+    await memory.write(project, "transcript.md", _transcript_page(s, members, lines))
+    if s.recap:
+        await memory.write(project, "recap.md", _recap_page(s))
 
 
 async def _update_profiles(session_id: int):
-    """After class: one call for the teacher's style, one per student.
-    Skipped without a server AI: then the phones build the profiles on-device."""
-    if not TUTOR_API_KEY:
-        return
+    """After it ends: the recap, the host's style, one profile per student,
+    all into the shared memory too. Without a server AI only the transcript is
+    saved; the phones then write recap and profiles on-device."""
     async with get_session_factory(DATABASE_URL)() as db:
         s = await db.get(ClassSession, session_id)
         lines = (await db.execute(select(ClassLine).where(
             ClassLine.session_id == session_id).order_by(ClassLine.id))).scalars().all()
-        transcript = "\n".join(f"{l.name} ({l.role}): {l.text}" for l in lines)[-MAX_PACK_CHARS:]
-        if not transcript:
+        transcript = "\n".join(f"{l.name} ({_role_label(s, l.role)}): {l.text}" for l in lines)[-MAX_PACK_CHARS:]
+        await db.commit()
+        if not TUTOR_API_KEY or not transcript:
+            await _remember_session(db, s)
             return
+        recap = await _llm(RECAP_SYSTEM.format(kind=s.kind), f"{s.kind.upper()}: {s.title}\n\n{transcript}")
+        s.recap = recap[:MAX_RECAP] or None
+        await db.commit()
+        await _remember_session(db, s)
         # Each AI call takes seconds: never hold a transaction (and SQLite's
         # lock) across one, or students asking meanwhile get "database is locked".
         old = await _profile(db, s.teacher_id, "teacher")
@@ -241,7 +305,8 @@ async def _member(db, session_id: int, user: AnswerUser):
 def _session_out(s: ClassSession, role: str) -> dict:
     out = {"id": s.id, "title": s.title, "subject": s.subject, "lang": s.lang,
            "call_url": s.call_url, "status": s.status, "teacher": s.teacher_name,
-           "role": role, "created_at": s.created_at.isoformat()}
+           "role": role, "kind": s.kind, "recap": s.recap,
+           "created_at": s.created_at.isoformat()}
     if role == "teacher":
         out["invite_token"] = s.invite_token
     return out
@@ -252,6 +317,7 @@ class NewClass(BaseModel):
     subject: str | None = None
     lang: str = "en-US"
     call_url: str | None = None
+    kind: str = "class"
 
 
 @router.post("", status_code=201)
@@ -259,13 +325,16 @@ async def create_class(body: NewClass, user: AnswerUser = Depends(get_current_us
                        db: AsyncSession = Depends(get_db)):
     if body.lang not in LANGS:
         raise HTTPException(400, f"lang must be one of {sorted(LANGS)}")
+    if body.kind not in KINDS:
+        raise HTTPException(400, "kind is class or meeting")
     url = (body.call_url or "").strip() or None
     if url and not url.startswith("https://"):
         raise HTTPException(400, "The call link must start with https://")
     s = ClassSession(teacher_id=user.id, teacher_name=_name(user),
                      title=_clean(body.title, 200, "Title"),
                      subject=(body.subject or "").strip()[:100] or None,
-                     lang=body.lang, call_url=url, invite_token=secrets.token_urlsafe(12))
+                     lang=body.lang, call_url=url, invite_token=secrets.token_urlsafe(12),
+                     kind=body.kind)
     db.add(s)
     await db.flush()
     db.add(ClassMember(session_id=s.id, user_id=user.id, name=_name(user), role="teacher"))
@@ -440,6 +509,8 @@ async def answer_question(question_id: int, body: TeacherAnswer,
     q.teacher_answer = _clean(body.text, MAX_ANSWER, "Answer")
     q.status = "teacher_answered"
     await db.commit()
+    await memory.write(memory.session_project(s.id), f"answers/q{q.id}.md",
+                       f"# {q.question}\n\n{s.teacher_name} answered: {q.teacher_answer}\n")
     return _question_out(q)
 
 
@@ -503,6 +574,249 @@ async def put_profile(kind: str, body: ProfileText, user: AnswerUser = Depends(g
     await db.commit()
     return {"ok": True}
 
+
+
+class RecapText(BaseModel):
+    text: str
+
+
+@router.put("/{session_id}/recap")
+async def put_recap(session_id: int, body: RecapText, user: AnswerUser = Depends(get_current_user),
+                    db: AsyncSession = Depends(get_db)):
+    """The host's phone wrote the recap with Llama (no server AI needed)."""
+    s, m = await _member(db, session_id, user)
+    if m.role != "teacher":
+        raise HTTPException(403, "Only the host writes the recap")
+    if s.status != "ended":
+        raise HTTPException(409, "End it first")
+    s.recap = _clean_block(body.text, MAX_RECAP, "Recap")
+    await db.commit()
+    await _remember_session(db, s)
+    return _session_out(s, m.role)
+
+
+# --- shared memory: the same pages for the cloud assistant and local ones ----------
+
+async def _my_projects(db, user: AnswerUser, session_id: int | None = None) -> list[str]:
+    """The asker's own pages, then their classes and meetings, newest first."""
+    q = select(ClassMember.session_id).where(ClassMember.user_id == user.id)
+    if session_id:
+        q = q.where(ClassMember.session_id == session_id)
+    ids = (await db.execute(q.order_by(ClassMember.session_id.desc()).limit(30))).scalars().all()
+    return [memory.person_project(user.id)] + [memory.session_project(i) for i in ids]
+
+
+async def _search_memory(db, user: AnswerUser, query: str, session_id: int | None = None) -> list[dict]:
+    query = _clean(query, 300, "Search")
+    return await memory.search(await _my_projects(db, user, session_id), query)
+
+
+async def _save_note(user: AnswerUser, text: str) -> dict:
+    text = _clean_block(text, MAX_ANSWER, "Note")
+    path = f"notes/{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.md"
+    await memory.write(memory.person_project(user.id), path, f"# Note\n\n{text}\n")
+    return {"saved": path}
+
+
+@app.get("/api/memory/search")
+async def memory_search(q: str, session_id: int | None = None,
+                        user: AnswerUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """For local assistants (Llama on the phone): the pages that match, in full."""
+    return {"hits": await _search_memory(db, user, q, session_id)}
+
+
+class Note(BaseModel):
+    text: str
+
+
+@app.post("/api/memory/notes", status_code=201)
+async def memory_note(body: Note, user: AnswerUser = Depends(get_current_user)):
+    return await _save_note(user, body.text)
+
+
+# --- the assistant: Muse with tools; the phone runs the device ones -----------------
+
+# Run here: they touch the shared memory.
+SERVER_TOOLS = {
+    "search_memory": {"description": "Search the user's classes, meetings, recaps and notes.",
+                      "properties": {"query": {"type": "string"}}, "required": ["query"]},
+    "save_note": {"description": "Save a note to the user's memory.",
+                  "properties": {"text": {"type": "string"}}, "required": ["text"]},
+}
+# Proposed to the phone, which runs them only after the user confirms.
+DEVICE_TOOLS = {
+    "add_calendar_event": {
+        "description": "Add an event or reminder to the user's calendar.",
+        "properties": {"title": {"type": "string"},
+                       "start": {"type": "string", "description": "ISO 8601 with UTC offset"},
+                       "duration_minutes": {"type": "integer"},
+                       "description": {"type": "string"}},
+        "required": ["title", "start"]},
+    "share_text": {"description": "Share text (e.g. a recap) through another app: email, WhatsApp…",
+                   "properties": {"text": {"type": "string"}}, "required": ["text"]},
+}
+TOOLS = [{"type": "function", "function": {
+    "name": n, "description": t["description"],
+    "parameters": {"type": "object", "properties": t["properties"], "required": t["required"]}}}
+    for n, t in {**SERVER_TOOLS, **DEVICE_TOOLS}.items()]
+
+ASSISTANT_SYSTEM = (
+    "You are {name}'s Passaly assistant for their classes and meetings. Now: {now}.\n"
+    "Before answering about anything said or decided in a class or meeting, call "
+    "search_memory, and answer only from what it returns; if it finds nothing, say so.\n"
+    "When the user wants something done, call add_calendar_event, share_text or "
+    "save_note. Calendar and share run on the user's phone after they confirm, so "
+    "say what you proposed. Reply briefly, in the user's language."
+)
+MAX_TOOL_ROUNDS = 4
+# ponytail: per-process daily count; a table when there is more than one worker.
+_assist_count: dict[tuple[str, str], int] = {}
+
+
+class ChatTurn(BaseModel):
+    role: str
+    content: str
+
+
+class AssistantAsk(BaseModel):
+    messages: list[ChatTurn]
+    now: str | None = None  # the phone's local time, ISO 8601 with offset
+    session_id: int | None = None
+
+
+def _device_action(name: str, args: dict) -> dict | None:
+    """A device tool call the phone can show, or None when the arguments are unusable."""
+    if name == "add_calendar_event":
+        title, start = str(args.get("title", "")).strip(), str(args.get("start", "")).strip()
+        try:
+            datetime.fromisoformat(start)
+        except ValueError:
+            return None
+        if not title:
+            return None
+        minutes = args.get("duration_minutes")
+        return {"type": name, "title": title[:200], "start": start,
+                "duration_minutes": minutes if isinstance(minutes, int) and 0 < minutes <= 24 * 60 else 30,
+                "description": str(args.get("description", ""))[:2000]}
+    if name == "share_text":
+        text = str(args.get("text", "")).strip()
+        return {"type": name, "text": text[:MAX_RECAP]} if text else None
+    return None
+
+
+@app.post("/api/assistant")
+async def assistant(body: AssistantAsk, user: AnswerUser = Depends(get_current_user),
+                    db: AsyncSession = Depends(get_db)):
+    """Cloud mode. Returns the reply and the device actions waiting for the user's OK."""
+    day = (user.id, datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    if _assist_count.get(day, 0) >= ASKS_PER_DAY:
+        raise HTTPException(429, f"You can ask {ASKS_PER_DAY} times a day")
+    _assist_count[day] = _assist_count.get(day, 0) + 1
+    turns = [t for t in body.messages if t.role in ("user", "assistant")][-12:]
+    if not turns or turns[-1].role != "user":
+        raise HTTPException(400, "The last message must be the user's")
+    messages = [{"role": "system", "content": ASSISTANT_SYSTEM.format(
+        name=_name(user), now=(body.now or datetime.now(timezone.utc).isoformat())[:40])}]
+    messages += [{"role": t.role, "content": _clean_block(t.content, MAX_QUESTION, "Message")} for t in turns]
+    await db.commit()  # no transaction across the AI calls
+    actions, sources = [], []
+    for _ in range(MAX_TOOL_ROUNDS):
+        msg = await _chat(messages, TOOLS)
+        calls = msg.tool_calls or []
+        if not calls:
+            return {"reply": (msg.content or "").strip(), "actions": actions, "sources": sources}
+        # Meta's docs: the full assistant message (with tool_calls) goes back
+        # before the tool results, or the next call is a 400.
+        messages.append({"role": "assistant", "content": msg.content or "",
+                         "tool_calls": [{"id": c.id, "type": "function",
+                                         "function": {"name": c.function.name,
+                                                      "arguments": c.function.arguments}} for c in calls]})
+        for c in calls:
+            try:
+                args = json.loads(c.function.arguments or "{}")
+            except ValueError:
+                args = {}
+            name = c.function.name
+            try:
+                if name == "search_memory":
+                    hits = await _search_memory(db, user, str(args.get("query", "")), body.session_id)
+                    sources += [{"title": h["title"], "project": h["project"]} for h in hits]
+                    result = {"hits": hits} if hits else {"hits": [], "note": "Nothing in memory."}
+                elif name == "save_note":
+                    result = await _save_note(user, str(args.get("text", "")))
+                elif (action := _device_action(name, args)):
+                    actions.append(action)
+                    result = {"status": "proposed; runs on the phone after the user confirms"}
+                else:
+                    result = {"error": f"unusable call to {name}"}
+            except HTTPException as e:
+                result = {"error": e.detail}
+            messages.append({"role": "tool", "tool_call_id": c.id, "content": json.dumps(result)[:12000]})
+    return {"reply": "I could not finish that; try asking more simply.", "actions": actions, "sources": sources}
+
+
+# --- the plugin: memory over MCP for any local AI app (LM Studio, Claude, Muse Code) --
+# Streamable HTTP, JSON responses only (modelcontextprotocol.io/specification/
+# 2025-06-18/basic/transports). The bearer is the person's own key, so a plugin
+# sees exactly what that person sees; ai-memory's root token never leaves here.
+
+MCP_ORIGINS = {o for o in os.getenv("MCP_ALLOWED_ORIGINS", "https://passaly.com").split(",") if o}
+MCP_TOOLS = [{"name": n, "description": t["description"],
+              "inputSchema": {"type": "object", "properties": t["properties"], "required": t["required"]}}
+             for n, t in SERVER_TOOLS.items()]
+
+
+def _rpc(id_, result=None, error=None):
+    return JSONResponse({"jsonrpc": "2.0", "id": id_, **({"error": error} if error else {"result": result})})
+
+
+@app.get("/mcp")
+async def mcp_get():
+    return Response(status_code=405)  # no server-initiated stream
+
+
+@app.post("/mcp")
+async def mcp(request: Request, db: AsyncSession = Depends(get_db)):
+    origin = request.headers.get("origin")
+    if origin and origin not in MCP_ORIGINS:  # the spec's DNS-rebinding guard
+        raise HTTPException(403, "Origin not allowed")
+    auth = request.headers.get("authorization", "")
+    key = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    p = key and (await db.execute(select(Person).where(Person.key == key))).scalar_one_or_none()
+    if not p:
+        return JSONResponse({"error": "Use your Passaly Classes key as the bearer token"}, status_code=401)
+    user = AnswerUser(id=str(p.id), username=p.name, display_name=p.name)
+    try:
+        msg = await request.json()
+    except ValueError:
+        return _rpc(None, error={"code": -32700, "message": "Parse error"})
+    if not isinstance(msg, dict):
+        return _rpc(None, error={"code": -32600, "message": "One message per request"})
+    if "id" not in msg:
+        return Response(status_code=202)  # notification or response: accepted
+    method, params, id_ = msg.get("method"), msg.get("params") or {}, msg["id"]
+    if method == "initialize":
+        return _rpc(id_, {"protocolVersion": params.get("protocolVersion", "2025-06-18"),
+                          "capabilities": {"tools": {}},
+                          "serverInfo": {"name": "passaly-memory", "version": "1.0"}})
+    if method == "ping":
+        return _rpc(id_, {})
+    if method == "tools/list":
+        return _rpc(id_, {"tools": MCP_TOOLS})
+    if method == "tools/call":
+        name, args = params.get("name"), params.get("arguments") or {}
+        try:
+            if name == "search_memory":
+                out = {"hits": await _search_memory(db, user, str(args.get("query", "")))}
+            elif name == "save_note":
+                out = await _save_note(user, str(args.get("text", "")))
+            else:
+                return _rpc(id_, error={"code": -32602, "message": f"Unknown tool {name}"})
+        except HTTPException as e:
+            return _rpc(id_, {"content": [{"type": "text", "text": str(e.detail)}], "isError": True})
+        return _rpc(id_, {"content": [{"type": "text", "text": json.dumps(out, ensure_ascii=False)}],
+                          "isError": False})
+    return _rpc(id_, error={"code": -32601, "message": f"Method not found: {method}"})
 
 app.include_router(router)
 

@@ -99,6 +99,118 @@ with TestClient(app.app) as c:
     assert c.get(f"/api/classes/{cid}/pack", headers=siena).json()["teacher_style"] == "Draws maps."
     assert c.put("/api/profiles/admin", headers=gio, json={"text": "x"}).status_code == 400
 
+# --- meetings, shared memory, the assistant and the MCP plugin ---------------------
+import json as _json  # noqa: E402
+from types import SimpleNamespace as NS  # noqa: E402
+
+import memory  # noqa: E402
+
+pages = {}
+
+
+async def fake_memory(tool, args):
+    """ai-memory in a dict: same errors for a project with no pages yet."""
+    proj = args["project"]
+    if tool == "memory_write_page":
+        pages[(proj, args["path"])] = args["body"]
+        return {"path": args["path"]}
+    if not any(pr == proj for pr, _ in pages):
+        raise memory.MemoryError(f"project '{proj}' not found")
+    if tool == "memory_query":
+        words = args["query"].lower().split()
+        return {"hits": [{"path": pa, "title": pa, "rank": -1}
+                         for (pr, pa), b in pages.items() if pr == proj and any(w in b.lower() for w in words)]}
+    if tool == "memory_read_page":
+        return {"title": args["path"], "body": pages[(proj, args["path"])]}
+
+
+memory.URL, memory._call = "http://fake", fake_memory
+
+
+async def recap_llm(system, user):
+    if "recap" in system.lower():
+        return "## Summary\nBudget talk.\n## Decisions\nShip Friday.\n## Action items\n- Ana: send deck (due: Friday)\n## Open questions\nNone."
+    return "A profile."
+
+app._llm = recap_llm
+
+with TestClient(app.app) as c:
+    def person(name):
+        return {"X-Person-Key": c.post("/api/people", json={"name": name}).json()["key"]}
+
+    host, ana, eve = person("Bob"), person("Ana"), person("Eve")
+    assert c.post("/api/classes", headers=host, json={"title": "x", "kind": "party"}).status_code == 400
+    mt = c.post("/api/classes", headers=host, json={"title": "Q3 budget", "kind": "meeting"}).json()
+    assert mt["kind"] == "meeting" and mt["recap"] is None
+    c.post(f"/api/classes/join/{mt['invite_token']}", headers=ana)
+    c.post(f"/api/classes/{mt['id']}/lines", headers=host, json={"text": "We ship the budget deck Friday."})
+    c.post(f"/api/classes/{mt['id']}/lines", headers=ana, json={"text": "I will send the deck."})
+    assert c.put(f"/api/classes/{mt['id']}/recap", headers=host, json={"text": "x"}).status_code == 409
+    c.post(f"/api/classes/{mt['id']}/end", headers=host)
+
+    # the server AI wrote the recap; transcript and recap are in the shared memory
+    got = c.get(f"/api/classes/{mt['id']}", headers=ana).json()
+    assert "Ship Friday." in got["recap"]
+    proj = memory.session_project(mt["id"])
+    assert "Bob (host)" in pages[(proj, "transcript.md")] and "Ana: send deck" in pages[(proj, "recap.md")]
+
+    # a phone running Llama sends its own recap; only the host may
+    assert c.put(f"/api/classes/{mt['id']}/recap", headers=ana, json={"text": "x"}).status_code == 403
+    assert c.put(f"/api/classes/{mt['id']}/recap", headers=host,
+                 json={"text": "## Summary\nDeck Friday.\n## Action items\n- Ana: deck"}).json()["recap"].count("\n") == 3
+
+    # memory search sees only your own classes and meetings
+    assert c.get("/api/memory/search?q=deck", headers=ana).json()["hits"]
+    assert c.get("/api/memory/search?q=deck", headers=eve).json()["hits"] == []
+    assert c.post("/api/memory/notes", headers=eve, json={"text": "Eve's deck idea"}).status_code == 201
+    assert not any("Eve" in h["text"] for h in c.get("/api/memory/search?q=deck", headers=ana).json()["hits"])
+
+    # the assistant: Muse searches memory, then proposes a calendar event
+    calls = []
+
+    async def fake_chat(messages, tools=None):
+        calls.append(messages)
+        if len(calls) == 1:
+            return NS(content="", tool_calls=[
+                NS(id="1", function=NS(name="search_memory", arguments=_json.dumps({"query": "deck"}))),
+                NS(id="2", function=NS(name="add_calendar_event", arguments=_json.dumps(
+                    {"title": "Send deck", "start": "2026-11-07T09:00:00-08:00", "duration_minutes": 9999}))),
+                NS(id="3", function=NS(name="add_calendar_event", arguments='{"title": "bad", "start": "Friday"}'))])
+        return NS(content="Ana sends the deck Friday; I proposed a calendar event.", tool_calls=None)
+
+    app._chat = fake_chat
+    r = c.post("/api/assistant", headers=ana, json={
+        "messages": [{"role": "user", "content": "When is the deck due? Remind me."}],
+        "now": "2026-11-03T20:00:00-08:00"}).json()
+    assert r["reply"].startswith("Ana sends the deck")
+    assert r["actions"] == [{"type": "add_calendar_event", "title": "Send deck",
+                             "start": "2026-11-07T09:00:00-08:00", "duration_minutes": 30, "description": ""}]
+    tool_msgs = [m for m in calls[1] if m["role"] == "tool"]
+    assert "Deck Friday." in tool_msgs[0]["content"] and "unusable" in tool_msgs[2]["content"]
+    assert calls[1][-4]["tool_calls"][0]["function"]["name"] == "search_memory"  # full assistant message sent back
+    assert c.post("/api/assistant", headers=ana, json={"messages": [
+        {"role": "assistant", "content": "hi"}]}).status_code == 400
+
+    # the MCP plugin: the person's key is the bearer
+    ana_key = ana["X-Person-Key"]
+    bearer = {"Authorization": f"Bearer {ana_key}", "Accept": "application/json, text/event-stream"}
+    assert c.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"}).status_code == 401
+    assert c.post("/mcp", headers={**bearer, "Origin": "https://evil.example"},
+                  json={"jsonrpc": "2.0", "id": 1, "method": "ping"}).status_code == 403
+    assert c.get("/mcp", headers=bearer).status_code == 405
+    init = c.post("/mcp", headers=bearer, json={"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                                                "params": {"protocolVersion": "2025-06-18"}}).json()
+    assert init["result"]["capabilities"] == {"tools": {}}
+    assert c.post("/mcp", headers=bearer, json={"jsonrpc": "2.0", "method": "notifications/initialized"}).status_code == 202
+    names = [t["name"] for t in c.post("/mcp", headers=bearer, json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"}).json()["result"]["tools"]]
+    assert names == ["search_memory", "save_note"]
+    hit = c.post("/mcp", headers=bearer, json={"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                                               "params": {"name": "search_memory", "arguments": {"query": "deck"}}}).json()
+    assert "Deck Friday." in hit["result"]["content"][0]["text"] and hit["result"]["isError"] is False
+    assert c.post("/mcp", headers=bearer, json={"jsonrpc": "2.0", "id": 4, "method": "nope"}).json()["error"]["code"] == -32601
+
+memory.URL = ""
+
 # --- a slow real AI: profiles being written must not lock out a student asking ---
 import asyncio  # noqa: E402
 

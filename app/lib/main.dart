@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'api.dart';
+import 'assistant_screen.dart';
 import 'models_screen.dart';
 import 'room_screen.dart';
 
@@ -106,13 +107,21 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _create() async {
     final title = TextEditingController(), subject = TextEditingController();
-    var lang = 'en-US';
+    var lang = 'en-US', kind = 'class';
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, set) => AlertDialog(
-          title: const Text('Start a class'),
+          title: const Text('Start'),
           content: Column(mainAxisSize: MainAxisSize.min, children: [
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(value: 'class', icon: Icon(Icons.school_outlined), label: Text('Class')),
+                ButtonSegment(value: 'meeting', icon: Icon(Icons.groups_outlined), label: Text('Meeting')),
+              ],
+              selected: {kind},
+              onSelectionChanged: (v) => set(() => kind = v.first),
+            ),
             TextField(controller: title, decoration: const InputDecoration(labelText: 'Title')),
             TextField(controller: subject, decoration: const InputDecoration(labelText: 'Subject')),
             DropdownButtonFormField<String>(
@@ -137,7 +146,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (ok != true) return;
     try {
-      _open(await Api.create(title.text, subject.text, lang));
+      _open(await Api.create(title.text, subject.text, lang, kind));
     } catch (e) {
       if (mounted) toast(context, e);
     }
@@ -198,6 +207,11 @@ class _HomeScreenState extends State<HomeScreen> {
           title: const Text('Passaly Classes'),
           actions: [
             IconButton(
+              tooltip: 'Assistant',
+              icon: const Icon(Icons.auto_awesome),
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AssistantScreen())),
+            ),
+            IconButton(
               tooltip: 'Tutor AI',
               icon: const Icon(Icons.memory),
               onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ModelsScreen())),
@@ -214,7 +228,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         floatingActionButton: FloatingActionButton.extended(
-            onPressed: _create, icon: const Icon(Icons.add), label: const Text('Start a class')),
+            onPressed: _create, icon: const Icon(Icons.add), label: const Text('Start')),
         body: RefreshIndicator(
           onRefresh: _load,
           child: ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 96), children: [
@@ -234,13 +248,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
             ],
             const SizedBox(height: 16),
-            Text('My classes', style: Theme.of(context).textTheme.titleMedium),
-            if (_classes.isEmpty) const Padding(padding: EdgeInsets.all(8), child: Text('No classes yet.')),
+            Text('Classes and meetings', style: Theme.of(context).textTheme.titleMedium),
+            if (_classes.isEmpty) const Padding(padding: EdgeInsets.all(8), child: Text('Nothing yet.')),
             for (final c in _classes)
               Card(
                 child: ListTile(
                   title: Text('${c['title']}'),
-                  subtitle: Text(c['role'] == 'teacher' ? 'You teach' : 'With ${c['teacher']}'),
+                  leading: Icon(c['kind'] == 'meeting' ? Icons.groups_outlined : Icons.school_outlined),
+                  subtitle: Text(c['role'] == 'teacher'
+                      ? (c['kind'] == 'meeting' ? 'You host' : 'You teach')
+                      : 'With ${c['teacher']}'),
                   trailing: Chip(
                     label: Text('${c['status']}'),
                     backgroundColor: c['status'] == 'live' ? Colors.red.shade100 : null,

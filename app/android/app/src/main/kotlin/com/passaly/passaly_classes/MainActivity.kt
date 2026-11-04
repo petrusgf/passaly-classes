@@ -22,6 +22,9 @@ class MainActivity : FlutterActivity() {
         MethodChannel(messenger, DownloadChannel.CHANNEL)
             .setMethodCallHandler(DownloadChannel(applicationContext))
 
+        // The activity: starting another app (calendar, share sheet) needs one.
+        MethodChannel(messenger, ActionsChannel.CHANNEL).setMethodCallHandler(ActionsChannel(this))
+
         // The activity: asking for the microphone needs one.
         speech = SpeechChannel(this).also {
             MethodChannel(messenger, SpeechChannel.CHANNEL).setMethodCallHandler(it)

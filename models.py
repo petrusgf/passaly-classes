@@ -17,7 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy import event
+from sqlalchemy import event, inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -63,6 +63,11 @@ class ClassSession(Base):
     invite_token = Column(Text, nullable=False, unique=True)
     # live while lines are accepted; ended once the teacher closes it.
     status = Column(Text, nullable=False, default="live")
+    # class | meeting. ponytail: a meeting is a class whose roles read
+    # host / participant on screen; the columns keep teacher/student.
+    kind = Column(Text, nullable=False, default="class")
+    # After it ends: summary, decisions, action items, open questions (markdown).
+    recap = Column(Text)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
@@ -155,6 +160,16 @@ def get_session_factory(database_url: str) -> sessionmaker:
     return _async_session_factory
 
 
+# Columns added after the first deploy: create_all makes new tables only, so
+# an existing database gets these with ALTER TABLE.
+_ADDED = {"class_session": {"kind": "TEXT NOT NULL DEFAULT 'class'", "recap": "TEXT"}}
+
+
 async def create_tables(database_url: str):
     async with get_engine(database_url).begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        for table, cols in _ADDED.items():
+            have = await conn.run_sync(lambda c: {x["name"] for x in inspect(c).get_columns(table)})
+            for name, ddl in cols.items():
+                if name not in have:
+                    await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))

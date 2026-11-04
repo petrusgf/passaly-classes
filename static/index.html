@@ -105,8 +105,10 @@ async function home() {
         <div id="inbox"></div>
       </div>
       <div class="col-lg-5"><div class="card shadow-sm"><div class="card-body">
-        <h2 class="h5">Start a class</h2>
+        <h2 class="h5">Start a class or meeting</h2>
         <form id="f">
+          <select class="form-select mb-2" name="kind"><option value="class">Class: a tutor for students afterwards</option>
+            <option value="meeting">Meeting: recap, decisions and action items</option></select>
           <input class="form-control mb-2" name="title" placeholder="Title, e.g. Parkway vs driveway" required maxlength="200">
           <input class="form-control mb-2" name="subject" placeholder="Subject, e.g. English" maxlength="100">
           <label class="form-label small mb-1">Spoken language (for live captions)</label>
@@ -115,7 +117,7 @@ async function home() {
             <option value="pt-BR">Português (Brasil)</option><option value="es-ES">Español</option>
             <option value="fr-CA">Français (Canada)</option></select>
           <input class="form-control mb-3" name="call_url" placeholder="Video call link (Meet, Zoom), optional">
-          <button class="btn btn-primary w-100">Create class</button>
+          <button class="btn btn-primary w-100">Create</button>
         </form><div class="text-danger small mt-2" id="err"></div>
       </div></div></div>
     </div>`;
@@ -128,7 +130,7 @@ async function home() {
   const classes = await api('GET', '/api/classes');
   $('#list').innerHTML = classes.length ? classes.map(c => `
     <a href="/class/${c.id}" data-go class="list-group-item list-group-item-action d-flex justify-content-between">
-      <span><strong>${esc(c.title)}</strong> <span class="text-body-secondary small">· ${esc(c.subject || '')} · ${c.role === 'teacher' ? 'you teach' : 'with ' + esc(c.teacher)}</span></span>
+      <span><strong>${esc(c.title)}</strong> <span class="text-body-secondary small">· ${esc(c.subject || '')} · ${c.role === 'teacher' ? (c.kind === 'meeting' ? 'you host' : 'you teach') : 'with ' + esc(c.teacher)}</span></span>
       <span class="badge ${c.status === 'live' ? 'text-bg-danger' : 'text-bg-secondary'} align-self-center">${c.status}</span>
     </a>`).join('') : '<div class="text-body-secondary small">No classes yet.</div>';
   renderInbox();
@@ -170,7 +172,7 @@ async function room(id) {
   let c;
   try { c = await api('GET', `/api/classes/${id}`); }
   catch (x) { view.innerHTML = `<div class="alert alert-warning">${esc(x.message)}</div>`; return; }
-  const teacher = c.role === 'teacher', live = c.status === 'live';
+  const teacher = c.role === 'teacher', live = c.status === 'live', meeting = c.kind === 'meeting';
   const invite = `${location.origin}${ROOT}/join/${c.invite_token}`;
   lastLine = 0;
   view.innerHTML = `
@@ -178,9 +180,11 @@ async function room(id) {
       <a href="/" data-go class="btn btn-sm btn-light">←</a>
       <h1 class="h4 mb-0 me-auto">${esc(c.title)} <span class="badge ${live ? 'text-bg-danger' : 'text-bg-secondary'} fs-6 align-middle">${c.status}</span></h1>
       ${c.call_url ? `<a class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener" href="${esc(c.call_url)}">Open video call</a>` : ''}
-      ${teacher && live ? `<button class="btn btn-sm btn-outline-danger" id="end">End class</button>` : ''}
+      ${teacher && live ? `<button class="btn btn-sm btn-outline-danger" id="end">End ${meeting ? 'meeting' : 'class'}</button>` : ''}
     </div>
-    <p class="small text-body-secondary">Teacher: ${esc(c.teacher)} · In class: ${c.members.map(m => esc(m.name)).join(', ')}</p>
+    <p class="small text-body-secondary">${meeting ? 'Host' : 'Teacher'}: ${esc(c.teacher)} · ${meeting ? 'People' : 'In class'}: ${c.members.map(m => esc(m.name)).join(', ')}</p>
+    ${c.recap ? `<div class="card shadow-sm mb-3"><div class="card-body"><h2 class="h6">Recap</h2>
+      <div class="small" style="white-space:pre-wrap">${esc(c.recap)}</div></div></div>` : ''}
     ${teacher ? `<div class="input-group input-group-sm mb-3"><span class="input-group-text">Invite link</span>
       <input class="form-control" readonly value="${esc(invite)}"><button class="btn btn-outline-secondary" id="copy">Copy</button></div>` : ''}
     <div class="row g-4">
@@ -209,7 +213,8 @@ async function room(id) {
 
   if (teacher) $('#copy').onclick = () => navigator.clipboard.writeText(invite);
   if (teacher && live) $('#end').onclick = async () => {
-    if (!confirm('End the class? The transcript closes and the tutor learns from it.')) return;
+    if (!confirm(meeting ? 'End the meeting? The transcript closes and the AI writes the recap.'
+                         : 'End the class? The transcript closes and the tutor learns from it.')) return;
     await api('POST', `/api/classes/${id}/end`); route();
   };
   if (live) {
