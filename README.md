@@ -157,6 +157,15 @@ and run only when the user taps.
 original is kept for download; its text (`pypdf` for PDFs) goes into the
 session's memory, so the assistant and MCP can use it.
 
+**Tasks.** A task directory per class or meeting (everyone in it sees it), or
+a personal one. Add a task from the room ("Add task"), by asking the assistant
+("add a task in the meeting: …"; Muse calls `add_task`, Llama writes an
+`ACTION {"type":"add_task",…}` line), or from an agent over MCP. Each task is
+mirrored to memory as `tasks/<id>.md` (status, who, due, details, result, and
+how to update it), rewritten on every change, so agents find it with
+`list_files` / `search_memory` too. An agent works through `list_tasks`, then
+`update_task` (in_progress → done, with a `result`); the room shows the result.
+
 **Memory.** [ai-memory](https://github.com/akitaonrails/ai-memory) over its
 MCP endpoint (`memory_write_page`, `memory_query`, `memory_read_page`,
 `memory_recent`). Spaces are `session-<id>` and `person-<id>`; a search only
@@ -177,6 +186,9 @@ It hosts each person's files and nothing of anyone else's.
 | `read_file` | One file in full | |
 | `search_memory` | Keyword search over all of it | |
 | `save_note` | A note in your own memory | ✔ |
+| `list_tasks` | Tasks you can see (filter by `status`, `session_id`) | |
+| `add_task` | A task in one of your classes or meetings, or your own | ✔ |
+| `update_task` | Status (`open`, `in_progress`, `done`) and a `result` | ✔ |
 | `add_document` | A markdown document in one of your classes or meetings | ✔ |
 
 The same files are MCP **resources** (`resources/list`, `resources/read`;
@@ -236,6 +248,8 @@ All `/api` calls send `X-Person-Key` (from `POST /api/people`).
 | GET | `/api/memory/search?q=` | Memory pages for the phone's assistant |
 | POST | `/api/memory/notes` | Save a note |
 | POST | `/api/assistant` | Assistant with Muse: reply + proposed tasks |
+| POST · GET | `/api/tasks` | Add a task · tasks I can see (`?status=`, `?session_id=`) |
+| PATCH | `/api/tasks/{id}` | Change status, record a result |
 | GET | `/api/tutor` | Is a cloud model set up? Which? |
 | POST · GET · DELETE | `/api/mcp/tokens` | Create · list · revoke MCP tokens |
 | POST | `/mcp` | The MCP server |
