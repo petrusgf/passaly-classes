@@ -1,5 +1,6 @@
 package com.passaly.passaly_classes
 
+import android.content.Intent
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -8,6 +9,7 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private var llama: LlamaChannel? = null
     private var speech: SpeechChannel? = null
+    private var actions: ActionsChannel? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -23,7 +25,9 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler(DownloadChannel(applicationContext))
 
         // The activity: starting another app (calendar, share sheet) needs one.
-        MethodChannel(messenger, ActionsChannel.CHANNEL).setMethodCallHandler(ActionsChannel(this))
+        actions = ActionsChannel(this).also {
+            MethodChannel(messenger, ActionsChannel.CHANNEL).setMethodCallHandler(it)
+        }
 
         // The activity: asking for the microphone needs one.
         speech = SpeechChannel(this).also {
@@ -37,6 +41,14 @@ class MainActivity : FlutterActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == SpeechChannel.PERMISSION_REQUEST) speech?.onPermissionResult(grantResults)
+    }
+
+    @Deprecated("Activity result API needs AndroidX Activity; this is the plain-Activity path")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == ActionsChannel.PICK_REQUEST) {
+            actions?.onPicked(if (resultCode == RESULT_OK) data?.data else null)
+        }
     }
 
     override fun onDestroy() {

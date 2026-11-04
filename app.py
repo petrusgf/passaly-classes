@@ -12,6 +12,8 @@ Moving into Passaly: the router goes to quiz-api as is, get_person becomes
 auth.get_current_user, and the Person table goes away.
 """
 
+import asyncio
+import io
 import json
 import os
 import re
@@ -30,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import memory
 from models import (
-    ClassLine, ClassMember, ClassSession, LearnerProfile, Person, TutorQuestion,
+    ClassLine, ClassMember, ClassSession, LearnerProfile, Person, SessionFile, TutorQuestion,
     create_tables, get_session_factory,
 )
 
@@ -51,6 +53,12 @@ ASKS_PER_DAY = 50
 LANGS = {"en-US", "en-CA", "pt-BR", "es-ES", "fr-CA", "fr-FR"}
 KINDS = {"class", "meeting"}
 MAX_RECAP = 8000
+# Documents added to a class or meeting. Originals on disk, text in memory.
+FILES_DIR = Path(os.getenv("FILES_DIR", Path(__file__).parent / "files"))
+MAX_FILE = 10 * 1024 * 1024
+MAX_FILE_TEXT = 200_000
+MAX_PDF_PAGES = 300
+FILE_TYPES = {".pdf": "application/pdf", ".txt": "text/plain", ".md": "text/markdown"}
 
 
 @asynccontextmanager
@@ -762,15 +770,143 @@ async def assistant(body: AssistantAsk, user: AnswerUser = Depends(get_current_u
     return {"reply": "I could not finish that; try asking more simply.", "actions": actions, "sources": sources}
 
 
+
+# --- documents added to a class or meeting -------------------------------------------
+
+def _extract_text(name: str, data: bytes) -> str:
+    """Plain text of an upload. Runs in a thread: a big PDF takes seconds."""
+    if name.lower().endswith(".pdf"):
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(data))
+        text = "\n\n".join((pg.extract_text() or "") for pg in reader.pages[:MAX_PDF_PAGES])
+    else:
+        text = data.decode("utf-8", errors="replace")
+    return text.strip()[:MAX_FILE_TEXT]
+
+
+def _file_out(f: SessionFile) -> dict:
+    return {"id": f.id, "session_id": f.session_id, "name": f.name, "mime": f.mime, "size": f.size,
+            "added_by": f.uploader_name, "created_at": f.created_at.isoformat()}
+
+
+async def _add_file(db, s: ClassSession, m: ClassMember, user: AnswerUser,
+                    name: str, data: bytes, text: str) -> SessionFile:
+    ext = Path(name).suffix.lower()
+    stem = re.sub(r"[^\w.-]+", "-", Path(name).stem).strip("-.")[:60] or "file"
+    f = SessionFile(session_id=s.id, uploader_id=user.id, uploader_name=m.name,
+                    name=f"{stem}{ext}", mime=FILE_TYPES[ext], size=len(data), memory_path="")
+    db.add(f)
+    await db.flush()
+    f.memory_path = f"files/{f.id}-{stem}.md"
+    folder = FILES_DIR / str(s.id)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{f.id}{ext}").write_bytes(data)
+    await db.commit()
+    await memory.write(memory.session_project(s.id), f.memory_path,
+                       f"# {f.name}\n\nAdded by {m.name} to the {s.kind} \"{s.title}\".\n\n{text or '(no text found)'}\n")
+    return f
+
+
+@router.post("/{session_id}/files", status_code=201)
+async def upload_file(session_id: int, name: str, request: Request,
+                      user: AnswerUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """The file is the raw request body; `name` gives its type (.pdf, .txt, .md)."""
+    s, m = await _member(db, session_id, user)
+    ext = Path(name).suffix.lower()
+    if ext not in FILE_TYPES:
+        raise HTTPException(400, "Add a PDF, .txt or .md file")
+    if int(request.headers.get("content-length") or 0) > MAX_FILE:
+        raise HTTPException(413, "Files can be up to 10 MB")
+    data = await request.body()
+    if not data:
+        raise HTTPException(400, "The file is empty")
+    if len(data) > MAX_FILE:
+        raise HTTPException(413, "Files can be up to 10 MB")
+    if ext == ".pdf" and not data.startswith(b"%PDF"):
+        raise HTTPException(400, "That is not a PDF")
+    try:
+        text = await asyncio.to_thread(_extract_text, name, data)
+    except Exception:  # noqa: BLE001  (a damaged PDF)
+        raise HTTPException(400, "Could not read that file")
+    f = await _add_file(db, s, m, user, name, data, text)
+    return {**_file_out(f), "chars": len(text)}
+
+
+@router.get("/{session_id}/files")
+async def list_session_files(session_id: int, user: AnswerUser = Depends(get_current_user),
+                             db: AsyncSession = Depends(get_db)):
+    s, _ = await _member(db, session_id, user)
+    rows = (await db.execute(select(SessionFile).where(
+        SessionFile.session_id == s.id).order_by(SessionFile.id))).scalars().all()
+    return [_file_out(f) for f in rows]
+
+
+@router.get("/{session_id}/files/{file_id}")
+async def download_file(session_id: int, file_id: int, user: AnswerUser = Depends(get_current_user),
+                        db: AsyncSession = Depends(get_db)):
+    s, _ = await _member(db, session_id, user)
+    f = await db.get(SessionFile, file_id)
+    if not f or f.session_id != s.id:
+        raise HTTPException(404, "File not found")
+    # Always a download, never rendered here: an uploaded file is someone else's content.
+    return FileResponse(FILES_DIR / str(s.id) / f"{f.id}{Path(f.name).suffix}", media_type=f.mime,
+                        filename=f.name, content_disposition_type="attachment")
+
 # --- the plugin: memory over MCP for any local AI app (LM Studio, Claude, Muse Code) --
 # Streamable HTTP, JSON responses only (modelcontextprotocol.io/specification/
 # 2025-06-18/basic/transports). The bearer is the person's own key, so a plugin
 # sees exactly what that person sees; ai-memory's root token never leaves here.
 
 MCP_ORIGINS = {o for o in os.getenv("MCP_ALLOWED_ORIGINS", "https://passaly.com").split(",") if o}
+MCP_ONLY_TOOLS = {
+    "list_files": {"description": "List the files you can read: recaps, transcripts, teacher answers "
+                                  "and documents of your classes and meetings, and your own notes and "
+                                  "profiles. Optionally only one class or meeting.",
+                   "properties": {"session_id": {"type": "integer"}}, "required": []},
+    "read_file": {"description": "Read one file in full by its uri (from list_files).",
+                  "properties": {"uri": {"type": "string"}}, "required": ["uri"]},
+    "add_document": {"description": "Add a markdown document to one of your classes or meetings; "
+                                    "everyone in it can then read it, and the assistant uses it.",
+                     "properties": {"session_id": {"type": "integer"}, "name": {"type": "string"},
+                                    "text": {"type": "string"}},
+                     "required": ["session_id", "name", "text"]},
+}
 MCP_TOOLS = [{"name": n, "description": t["description"],
               "inputSchema": {"type": "object", "properties": t["properties"], "required": t["required"]}}
-             for n, t in SERVER_TOOLS.items()]
+             for n, t in {**SERVER_TOOLS, **MCP_ONLY_TOOLS}.items()]
+URI_PREFIX = "passaly://"
+
+
+async def _labels(db, user: AnswerUser) -> dict[str, str]:
+    """project -> what to call it, for every project this person may read."""
+    rows = (await db.execute(
+        select(ClassSession).join(ClassMember, ClassMember.session_id == ClassSession.id)
+        .where(ClassMember.user_id == user.id).order_by(ClassSession.id.desc()).limit(30))).scalars().all()
+    return {memory.person_project(user.id): "Me",
+            **{memory.session_project(s.id): f"{s.kind.capitalize()}: {s.title} ({s.created_at:%Y-%m-%d})"
+               for s in rows}}
+
+
+async def _list_files(db, user: AnswerUser, session_id: int | None = None) -> list[dict]:
+    labels = await _labels(db, user)
+    if session_id is not None:
+        labels = {p: l for p, l in labels.items() if p == memory.session_project(session_id)}
+    out = []
+    for project, label in labels.items():
+        for pg in await memory.listing(project):
+            out.append({"uri": f"{URI_PREFIX}{project}/{pg['path']}", "name": pg["path"],
+                        "title": f"{label} · {pg['title'] or pg['path']}", "mimeType": "text/markdown"})
+    return out
+
+
+async def _read_uri(db, user: AnswerUser, uri: str) -> dict | None:
+    """The file behind a passaly:// uri, or None when it does not exist or is not yours."""
+    if not uri.startswith(URI_PREFIX) or "/" not in uri[len(URI_PREFIX):]:
+        return None
+    project, path = uri[len(URI_PREFIX):].split("/", 1)
+    if ".." in path or project not in await _labels(db, user):  # only your own projects
+        return None
+    return await memory.read(project, path)
 
 
 def _rpc(id_, result=None, error=None):
@@ -804,12 +940,20 @@ async def mcp(request: Request, db: AsyncSession = Depends(get_db)):
     method, params, id_ = msg.get("method"), msg.get("params") or {}, msg["id"]
     if method == "initialize":
         return _rpc(id_, {"protocolVersion": params.get("protocolVersion", "2025-06-18"),
-                          "capabilities": {"tools": {}},
+                          "capabilities": {"tools": {}, "resources": {}},
                           "serverInfo": {"name": "passaly-memory", "version": "1.0"}})
     if method == "ping":
         return _rpc(id_, {})
     if method == "tools/list":
         return _rpc(id_, {"tools": MCP_TOOLS})
+    if method == "resources/list":
+        return _rpc(id_, {"resources": await _list_files(db, user)})
+    if method == "resources/read":
+        uri = str(params.get("uri", ""))
+        page = await _read_uri(db, user, uri)
+        if page is None:
+            return _rpc(id_, error={"code": -32002, "message": "Resource not found", "data": {"uri": uri}})
+        return _rpc(id_, {"contents": [{"uri": uri, "mimeType": "text/markdown", "text": page["text"]}]})
     if method == "tools/call":
         name, args = params.get("name"), params.get("arguments") or {}
         try:
@@ -817,6 +961,25 @@ async def mcp(request: Request, db: AsyncSession = Depends(get_db)):
                 out = {"hits": await _search_memory(db, user, str(args.get("query", "")))}
             elif name == "save_note":
                 out = await _save_note(user, str(args.get("text", "")))
+            elif name == "list_files":
+                sid = args.get("session_id")
+                out = {"files": await _list_files(db, user, sid if isinstance(sid, int) else None)}
+            elif name == "read_file":
+                page = await _read_uri(db, user, str(args.get("uri", "")))
+                if page is None:
+                    raise HTTPException(404, "No such file, or it is not yours")
+                out = page
+            elif name == "add_document":
+                sid = args.get("session_id")
+                if not isinstance(sid, int):
+                    raise HTTPException(400, "session_id is a number from list_files")
+                s, m = await _member(db, sid, user)
+                doc_name = _clean(str(args.get("name", "")), 100, "Name")
+                if not doc_name.lower().endswith(".md"):
+                    doc_name += ".md"
+                text = _clean_block(str(args.get("text", "")), MAX_FILE_TEXT, "Text")
+                f = await _add_file(db, s, m, user, doc_name, text.encode(), text)
+                out = {**_file_out(f), "uri": f"{URI_PREFIX}{memory.session_project(s.id)}/{f.memory_path}"}
             else:
                 return _rpc(id_, error={"code": -32602, "message": f"Unknown tool {name}"})
         except HTTPException as e:

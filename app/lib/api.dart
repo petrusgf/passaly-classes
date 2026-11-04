@@ -75,6 +75,21 @@ class Api {
       await _send('POST', '/api/classes', {'title': title, 'subject': subject, 'lang': lang, 'kind': kind})
           as Map<String, dynamic>;
 
+  static Future<List<Map<String, dynamic>>> files(int id) async =>
+      (await _send('GET', '/api/classes/$id/files') as List).cast<Map<String, dynamic>>();
+
+  /// Raw bytes as the body; the name tells the server the type (.pdf, .txt, .md).
+  static Future<void> uploadFile(int id, String name, List<int> bytes) async {
+    final res = await http
+        .post(Uri.parse('$base/api/classes/$id/files?name=${Uri.encodeQueryComponent(name)}'),
+            headers: {'X-Person-Key': key}, body: bytes)
+        .timeout(const Duration(seconds: 90));
+    if (res.statusCode >= 400) {
+      final data = jsonDecode(utf8.decode(res.bodyBytes));
+      throw ApiError(data is Map ? '${data['detail']}' : 'Server error ${res.statusCode}');
+    }
+  }
+
   /// The host's recap, written on this phone by Llama.
   static Future<void> saveRecap(int id, String text) => _send('PUT', '/api/classes/$id/recap', {'text': text});
 

@@ -106,3 +106,25 @@ async def recent(projects: list[str], path: str, limit: int) -> list[dict]:
         out.append({"project": p, "path": path, "title": page.get("title", ""),
                     "text": (page.get("body") or "")[:2000]})
     return out
+
+
+async def listing(project: str, limit: int = 100) -> list[dict]:
+    """The pages of one project, newest first: path, title, snippet."""
+    if not URL:
+        return []
+    try:
+        hits = (await _call("memory_recent", {"project": project, "limit": limit})).get("hits", [])
+    except MemoryError:
+        return []  # no pages yet
+    return [{"path": h["path"], "title": h.get("title", ""), "snippet": h.get("snippet", "")} for h in hits]
+
+
+async def read(project: str, path: str) -> dict | None:
+    """One page in full, or None when it does not exist."""
+    if not URL:
+        return None
+    try:
+        page = await _call("memory_read_page", {"project": project, "path": path})
+    except MemoryError:
+        return None
+    return {"title": page.get("title", ""), "text": page.get("body") or ""}

@@ -7,6 +7,7 @@ import tempfile
 
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{tempfile.mkdtemp()}/t.db"
 os.environ["TUTOR_API_KEY"] = "fake"
+os.environ["FILES_DIR"] = tempfile.mkdtemp()
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -121,7 +122,11 @@ async def fake_memory(tool, args):
         return {"hits": [{"path": pa, "title": pa, "rank": -1}
                          for (pr, pa), b in pages.items() if pr == proj and any(w in b.lower() for w in words)]}
     if tool == "memory_read_page":
+        if (proj, args["path"]) not in pages:
+            raise memory.MemoryError("page not found")
         return {"title": args["path"], "body": pages[(proj, args["path"])]}
+    if tool == "memory_recent":
+        return {"hits": [{"path": pa, "title": pa, "snippet": b[:80]} for (pr, pa), b in pages.items() if pr == proj]}
 
 
 memory.URL, memory._call = "http://fake", fake_memory
@@ -204,14 +209,88 @@ with TestClient(app.app) as c:
     assert c.get("/mcp", headers=bearer).status_code == 405
     init = c.post("/mcp", headers=bearer, json={"jsonrpc": "2.0", "id": 1, "method": "initialize",
                                                 "params": {"protocolVersion": "2025-06-18"}}).json()
-    assert init["result"]["capabilities"] == {"tools": {}}
+    assert init["result"]["capabilities"] == {"tools": {}, "resources": {}}
     assert c.post("/mcp", headers=bearer, json={"jsonrpc": "2.0", "method": "notifications/initialized"}).status_code == 202
     names = [t["name"] for t in c.post("/mcp", headers=bearer, json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"}).json()["result"]["tools"]]
-    assert names == ["search_memory", "save_note"]
+    assert names[:2] == ["search_memory", "save_note"]
     hit = c.post("/mcp", headers=bearer, json={"jsonrpc": "2.0", "id": 3, "method": "tools/call",
                                                "params": {"name": "search_memory", "arguments": {"query": "deck"}}}).json()
     assert "Deck Friday." in hit["result"]["content"][0]["text"] and hit["result"]["isError"] is False
     assert c.post("/mcp", headers=bearer, json={"jsonrpc": "2.0", "id": 4, "method": "nope"}).json()["error"]["code"] == -32601
+
+
+# --- documents in a session, and the MCP server as a file host ----------------------
+
+
+def tiny_pdf(text: str) -> bytes:
+    """A one-page PDF with `text`, built by hand (no PDF writer installed)."""
+    stream = f"BT /F1 18 Tf 72 720 Td ({text}) Tj ET".encode()
+    objs = [b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+            b"/Resources << /Font << /F1 5 0 R >> >> >>",
+            b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    out, offsets = b"%PDF-1.4\n", []
+    for i, o in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % i + o + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+    out += b"".join(b"%010d 00000 n \n" % o for o in offsets)
+    return out + b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
+
+
+with TestClient(app.app) as c:
+    mid = mt["id"]
+    up = c.post(f"/api/classes/{mid}/files?name=Launch plan.pdf", headers=ana,
+                content=tiny_pdf("Launch checklist: screenshots, pricing"))
+    assert up.status_code == 201 and up.json()["name"] == "Launch-plan.pdf" and up.json()["chars"] > 10, up.text
+    fid = up.json()["id"]
+    assert "Launch checklist" in pages[(memory.session_project(mid), f"files/{fid}-Launch-plan.md")]
+    assert c.post(f"/api/classes/{mid}/files?name=x.exe", headers=ana, content=b"MZ").status_code == 400
+    assert c.post(f"/api/classes/{mid}/files?name=x.pdf", headers=ana, content=b"not a pdf").status_code == 400
+    assert c.post(f"/api/classes/{mid}/files?name=x.pdf", headers=eve, content=tiny_pdf("x")).status_code == 404
+    assert [f["name"] for f in c.get(f"/api/classes/{mid}/files", headers=host).json()] == ["Launch-plan.pdf"]
+    dl = c.get(f"/api/classes/{mid}/files/{fid}", headers=host)
+    assert dl.content.startswith(b"%PDF") and dl.headers["content-disposition"].startswith("attachment")
+    assert c.get(f"/api/classes/{mid}/files/{fid}", headers=eve).status_code == 404
+
+    def rpc(who_key, method, params=None, id_=1):
+        return c.post("/mcp", headers={"Authorization": f"Bearer {who_key}"},
+                      json={"jsonrpc": "2.0", "id": id_, "method": method, "params": params or {}}).json()
+
+    def tool(who_key, name, args):
+        r = rpc(who_key, "tools/call", {"name": name, "arguments": args})["result"]
+        return r["isError"], _json.loads(r["content"][0]["text"]) if not r["isError"] else r["content"][0]["text"]
+
+    assert rpc(ana_key, "initialize")["result"]["capabilities"] == {"tools": {}, "resources": {}}
+    names = [t["name"] for t in rpc(ana_key, "tools/list")["result"]["tools"]]
+    assert names == ["search_memory", "save_note", "list_files", "read_file", "add_document"]
+
+    # list_files / resources: only Ana's own projects
+    _, listed = tool(ana_key, "list_files", {})
+    uris = [f["uri"] for f in listed["files"]]
+    assert f"passaly://session-{mid}/recap.md" in uris and f"passaly://session-{mid}/files/{fid}-Launch-plan.md" in uris
+    assert all(u.startswith((f"passaly://session-", f"passaly://person-")) for u in uris)
+    eve_key = eve["X-Person-Key"]
+    _, eve_listed = tool(eve_key, "list_files", {})
+    assert not any(f"session-{mid}" in f["uri"] for f in eve_listed["files"])
+    assert rpc(ana_key, "resources/list")["result"]["resources"][0]["mimeType"] == "text/markdown"
+
+    # read: yours yes; someone else's, or a made-up path, is "not found"
+    got = rpc(ana_key, "resources/read", {"uri": f"passaly://session-{mid}/recap.md"})["result"]["contents"][0]
+    assert "Deck Friday." in got["text"]
+    assert rpc(eve_key, "resources/read", {"uri": f"passaly://session-{mid}/recap.md"})["error"]["code"] == -32002
+    assert rpc(ana_key, "resources/read", {"uri": f"passaly://session-{mid}/../x"})["error"]["code"] == -32002
+    assert tool(eve_key, "read_file", {"uri": f"passaly://session-{mid}/recap.md"})[0] is True
+
+    # add_document: a member adds one; others in the meeting can read it; outsiders cannot add
+    err, doc = tool(ana_key, "add_document", {"session_id": mid, "name": "Pricing notes", "text": "Price: $4.99\nTrial: 7 days"})
+    assert not err and doc["name"] == "Pricing-notes.md"
+    _, back = tool(host["X-Person-Key"], "read_file", {"uri": doc["uri"]})
+    assert "Trial: 7 days" in back["text"]
+    assert tool(eve_key, "add_document", {"session_id": mid, "name": "x", "text": "y"})[0] is True
 
 memory.URL = ""
 

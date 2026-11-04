@@ -25,6 +25,7 @@ class _RoomScreenState extends State<RoomScreen> {
   final _lines = <Line>[];
   int _last = 0;
   List<Map<String, dynamic>> _questions = [];
+  List<Map<String, dynamic>> _files = [];
   Timer? _poll;
 
   bool _captions = false;
@@ -64,6 +65,7 @@ class _RoomScreenState extends State<RoomScreen> {
     }
     await _pull();
     await _loadQuestions();
+    _loadFiles();
     _poll = Timer.periodic(const Duration(seconds: 2), (_) => _pull());
     if (!_teacher && !_live) _profileStudentOnce();
   }
@@ -289,6 +291,29 @@ class _RoomScreenState extends State<RoomScreen> {
     );
   }
 
+  Future<void> _loadFiles() async {
+    try {
+      final f = await Api.files(widget.id);
+      if (mounted) setState(() => _files = f);
+    } catch (_) {}
+  }
+
+  Future<void> _addFile() async {
+    try {
+      final picked = await const MethodChannel('classes/actions').invokeMapMethod<String, dynamic>('pickFile');
+      if (picked == null) return;
+      setState(() => _working = 'Adding ${picked['name']}…');
+      await Api.uploadFile(widget.id, '${picked['name']}', picked['bytes'] as List<int>);
+      await _loadFiles();
+      if (mounted) toast(context, 'Added. Everyone here can read it, and the assistant uses it.');
+    } on PlatformException catch (e) {
+      if (mounted) toast(context, e.message ?? 'Could not read the file');
+    } catch (e) {
+      if (mounted) toast(context, e);
+    }
+    if (mounted) setState(() => _working = null);
+  }
+
   Future<void> _refreshInfo() async {
     try {
       final info = await Api.get(widget.id);
@@ -297,6 +322,24 @@ class _RoomScreenState extends State<RoomScreen> {
   }
 
   Widget _transcriptTab() => Column(children: [
+        ExpansionTile(
+          leading: const Icon(Icons.attach_file),
+          title: Text('Files (${_files.length})'),
+          children: [
+            for (final f in _files)
+              ListTile(
+                dense: true,
+                leading: Icon(f['mime'] == 'application/pdf' ? Icons.picture_as_pdf_outlined : Icons.description_outlined),
+                title: Text('${f['name']}'),
+                subtitle: Text('${f['added_by']} · ${((f['size'] as int) / 1024).ceil()} KB'),
+              ),
+            TextButton.icon(
+              onPressed: _working == null ? _addFile : null,
+              icon: const Icon(Icons.add),
+              label: const Text('Add PDF, .txt or .md'),
+            ),
+          ],
+        ),
         if (_info!['recap'] != null)
           Card(
             margin: const EdgeInsets.all(12),

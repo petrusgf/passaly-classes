@@ -5,3 +5,4 @@ __pycache__/
 models/*.litertlm
 models/LICENSE.txt
 models/NOTICE.txt
+files/

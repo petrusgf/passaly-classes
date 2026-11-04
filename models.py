@@ -118,6 +118,25 @@ class TutorQuestion(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
+class SessionFile(Base):
+    """A document someone added to a class or meeting. The original stays on
+    disk for download; its text goes into the session's shared memory."""
+    __tablename__ = "session_file"
+
+    id = Column(ID, primary_key=True, autoincrement=True)
+    session_id = Column(
+        ID, ForeignKey("class_session.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    uploader_id = Column(Text, nullable=False)
+    uploader_name = Column(Text, nullable=False)
+    name = Column(Text, nullable=False)
+    mime = Column(Text, nullable=False)
+    size = Column(Integer, nullable=False)
+    memory_path = Column(Text, nullable=False)  # the page in ai-memory
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
 class LearnerProfile(Base):
     """What the AI learned about one person: a teacher's way of teaching, or a
     student's way of learning. Rewritten as a whole after each class."""

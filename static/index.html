@@ -185,6 +185,12 @@ async function room(id) {
     <p class="small text-body-secondary">${meeting ? 'Host' : 'Teacher'}: ${esc(c.teacher)} · ${meeting ? 'People' : 'In class'}: ${c.members.map(m => esc(m.name)).join(', ')}</p>
     ${c.recap ? `<div class="card shadow-sm mb-3"><div class="card-body"><h2 class="h6">Recap</h2>
       <div class="small" style="white-space:pre-wrap">${esc(c.recap)}</div></div></div>` : ''}
+    <div class="card shadow-sm mb-3"><div class="card-body">
+      <div class="d-flex align-items-center mb-2"><h2 class="h6 mb-0 me-auto">Files</h2>
+        <label class="btn btn-sm btn-outline-primary mb-0">Add PDF, .txt or .md
+          <input type="file" id="fileIn" accept=".pdf,.txt,.md" hidden></label></div>
+      <div class="small text-body-secondary mb-2">Everyone here can read them, and the assistant uses them.</div>
+      <div id="files" class="small"></div></div></div>
     ${teacher ? `<div class="input-group input-group-sm mb-3"><span class="input-group-text">Invite link</span>
       <input class="form-control" readonly value="${esc(invite)}"><button class="btn btn-outline-secondary" id="copy">Copy</button></div>` : ''}
     <div class="row g-4">
@@ -232,6 +238,16 @@ async function room(id) {
     btn.disabled = false; $('#thinking').textContent = ''; renderQuestions(id, teacher);
   };
 
+  $('#fileIn').onchange = async e => {
+    const file = e.target.files[0]; if (!file) return;
+    try {
+      const r = await fetch(`${ROOT}/api/classes/${id}/files?name=${encodeURIComponent(file.name)}`,
+        {method: 'POST', headers: {'X-Person-Key': me.key}, body: file});
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+    } catch (x) { alert(x.message); }
+    e.target.value = ''; renderFiles(id);
+  };
+  renderFiles(id);
   await pullLines(id); renderQuestions(id, teacher);
   timers.push(setInterval(() => pullLines(id), 2000));
   timers.push(setInterval(() => renderQuestions(id, teacher), 10000));
@@ -248,6 +264,21 @@ async function pullLines(id) {
   if (!box.children.length) box.innerHTML = '<div class="text-body-secondary small" id="empty">No lines yet.</div>';
   else $('#empty')?.remove();
   if (atEnd) box.scrollTop = box.scrollHeight;
+}
+
+async function renderFiles(id) {
+  const files = await api('GET', `/api/classes/${id}/files`).catch(() => []);
+  $('#files').innerHTML = files.length ? files.map(f => `<div><a href="#" data-file="${f.id}" data-name="${esc(f.name)}">${esc(f.name)}</a>
+    <span class="text-body-secondary">· ${esc(f.added_by)} · ${Math.max(1, Math.round(f.size / 1024))} KB</span></div>`).join('')
+    : '<span class="text-body-secondary">No files yet.</span>';
+  // A download needs the key header, so it goes through fetch, then a blob link.
+  $('#files').querySelectorAll('[data-file]').forEach(a => a.onclick = async e => {
+    e.preventDefault();
+    const r = await fetch(`${ROOT}/api/classes/${id}/files/${a.dataset.file}`, {headers: {'X-Person-Key': me.key}});
+    if (!r.ok) return alert('Could not download');
+    const link = Object.assign(document.createElement('a'), {href: URL.createObjectURL(await r.blob()), download: a.dataset.name});
+    link.click(); URL.revokeObjectURL(link.href);
+  });
 }
 
 async function renderQuestions(id, teacher) {
