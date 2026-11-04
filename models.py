@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -133,6 +134,15 @@ def get_engine(database_url: str):
     global _engine
     if _engine is None:
         _engine = create_async_engine(database_url, echo=False)
+        if database_url.startswith("sqlite"):
+            # WAL: readers and the writer stop blocking each other; busy_timeout:
+            # a second writer waits its turn instead of failing at once.
+            @event.listens_for(_engine.sync_engine, "connect")
+            def _pragmas(conn, _):
+                cur = conn.cursor()
+                cur.execute("PRAGMA journal_mode=WAL")
+                cur.execute("PRAGMA busy_timeout=30000")
+                cur.close()
     return _engine
 
 

@@ -99,4 +99,32 @@ with TestClient(app.app) as c:
     assert c.get(f"/api/classes/{cid}/pack", headers=siena).json()["teacher_style"] == "Draws maps."
     assert c.put("/api/profiles/admin", headers=gio, json={"text": "x"}).status_code == 400
 
+# --- a slow real AI: profiles being written must not lock out a student asking ---
+import asyncio  # noqa: E402
+
+import httpx  # noqa: E402
+
+
+async def slow_llm(system, user):
+    # As in production: the teacher's profile is saved at 8 s, the student's
+    # call runs to 16 s, and the tutor's reply is saved at 9 s, in between,
+    # for longer than sqlite's 5 s default lock wait.
+    if "profile" in system.lower():
+        await asyncio.sleep(8)
+        return "Uses road examples."
+    await asyncio.sleep(9)
+    return "IN_CLASS: yes\nANSWER: ok"
+
+app._llm = slow_llm
+
+
+async def overlap():
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app.app), base_url="http://t") as ac:
+        r, _ = await asyncio.gather(
+            ac.post(f"/api/classes/{cid}/ask", headers=siena, json={"question": "Why parkway?"}),
+            app._update_profiles(cid))
+        return r
+
+assert asyncio.run(overlap()).status_code == 200
+
 print("class tutor: ok")

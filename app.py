@@ -203,9 +203,13 @@ async def _update_profiles(session_id: int):
         transcript = "\n".join(f"{l.name} ({l.role}): {l.text}" for l in lines)[-MAX_PACK_CHARS:]
         if not transcript:
             return
+        # Each AI call takes seconds: never hold a transaction (and SQLite's
+        # lock) across one, or students asking meanwhile get "database is locked".
         old = await _profile(db, s.teacher_id, "teacher")
-        await _save_profile(db, s.teacher_id, "teacher", await _llm(
-            STYLE_SYSTEM, f"CURRENT PROFILE:\n{old or '(none)'}\n\nCLASS TRANSCRIPT:\n{transcript}"))
+        await db.commit()
+        text = await _llm(STYLE_SYSTEM, f"CURRENT PROFILE:\n{old or '(none)'}\n\nCLASS TRANSCRIPT:\n{transcript}")
+        await _save_profile(db, s.teacher_id, "teacher", text)
+        await db.commit()
         students = (await db.execute(select(ClassMember).where(
             ClassMember.session_id == session_id, ClassMember.role == "student"))).scalars().all()
         for m in students:
@@ -213,12 +217,14 @@ async def _update_profiles(session_id: int):
                 TutorQuestion.session_id == session_id,
                 TutorQuestion.student_id == m.user_id))).scalars().all()
             old = await _profile(db, m.user_id, "student")
-            await _save_profile(db, m.user_id, "student", await _llm(
+            await db.commit()
+            text = await _llm(
                 LEARNER_SYSTEM,
                 f"STUDENT: {m.name}\nCURRENT PROFILE:\n{old or '(none)'}\n\n"
                 f"CLASS TRANSCRIPT:\n{transcript}\n\nTHEIR TUTOR QUESTIONS:\n" +
-                ("\n".join(asked) or "(none)")))
-        await db.commit()
+                ("\n".join(asked) or "(none)"))
+            await _save_profile(db, m.user_id, "student", text)
+            await db.commit()
 
 
 # --- membership -----------------------------------------------------------------
@@ -384,6 +390,7 @@ async def ask_tutor(session_id: int, body: Ask, user: AnswerUser = Depends(get_c
         .order_by(TutorQuestion.id))).scalars().all()
     pack = build_pack(s, lines, answered, await _profile(db, s.teacher_id, "teacher"),
                       await _profile(db, user.id, "student"))
+    await db.commit()  # no transaction stays open across the AI call (seconds)
     raw = await _llm(TUTOR_SYSTEM.format(teacher=s.teacher_name),
                      f"{pack}\n\n[STUDENT {m.name} ASKS]\n{question}")
     from_class, answer = parse_tutor(raw)
