@@ -72,9 +72,11 @@ confirmation.
   recaps and profiles, answers in the browser, and runs the assistant's tasks
   through tool calling.
 - **Llama 3.2 1B or 3B** (Meta's open model, through Google's LiteRT-LM) runs
-  **inside the phone**: no internet needed for the AI, and the questions
-  never leave the device. The phone writes the recap and the profiles itself,
-  and proposes the same tasks.
+  **inside the phone**: no cloud AI sees the questions. After class the tutor
+  also works **without internet**: the phone keeps each class's material, and
+  questions wait on the phone until it is back online (then the teacher gets
+  the ones the class didn't cover). The phone writes the recap and the
+  profiles itself, and proposes the same tasks.
 - **ai-memory** ([akitaonrails/ai-memory](https://github.com/akitaonrails/ai-memory))
   keeps the shared memory, so switching brains changes who thinks, not what
   is remembered.
@@ -100,8 +102,9 @@ In the app, the choice is one switch: **This phone · Llama** or
 - **You only see what you took part in.** Memory is kept per class or
   meeting and per person. A search, in the app or through the plugin, only
   looks at your own spaces.
-- **On-device mode**: with Llama, the AI runs on the phone, so the
-  student's questions never go to a cloud AI.
+- **On-device mode**: with Llama, the AI runs on the phone, so no cloud AI
+  sees the student's questions. They are still saved on the class server, so
+  the teacher can see them and answer what the class didn't cover.
 - **The tutor doesn't guess.** Anything the class didn't cover goes to a
   human, the teacher.
 - **Tasks need a tap**, and calendar events are confirmed in the calendar app.

@@ -106,6 +106,10 @@ On first start the app asks for a name and the class server, which is already
 filled in with `passaly.com/classes`. A domain is reached over HTTPS and an IP
 like `192.168.1.76:8010` over plain HTTP, for a laptop on the same Wi-Fi.
 
+**Offline after class**: with Llama, the phone keeps each class's material
+(the last answer of every read is cached) and queues questions with no
+connection, sending them in order once the server answers again.
+
 **Tutor AI** (chip icon): choose **This phone · Llama** or **Meta cloud · Muse**,
 and download Llama: the 1B (~0.96 GB) or the 3B (~2.2 GB, better at tasks). The
 app checks each file against the SHA-256 in `models/index.json` and greys out
@@ -191,6 +195,16 @@ Client config, e.g.:
 
     {"mcpServers": {"passaly": {"url": "https://passaly.com/classes/mcp",
       "headers": {"Authorization": "Bearer pcm_<your token>"}}}}
+
+Any MCP-capable agent shares the same memory. For example:
+
+    # Claude Code (docs: code.claude.com/docs/en/mcp)
+    claude mcp add --transport http passaly https://passaly.com/classes/mcp \
+      --header "Authorization: Bearer pcm_<your token>"
+
+    // OpenCode, opencode.json (docs: opencode.ai/docs/mcp-servers)
+    {"mcp": {"passaly": {"type": "remote", "url": "https://passaly.com/classes/mcp",
+      "headers": {"Authorization": "Bearer pcm_<your token>"}, "oauth": false}}}
 
 For a Claude custom connector, put the header under *Request headers*
 ([Claude help](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp)).
