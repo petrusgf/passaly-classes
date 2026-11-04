@@ -71,6 +71,38 @@ In the app, the class server is the laptop's Wi-Fi address, e.g. `192.168.1.76:8
 
 `flutter test` runs the tutor's retrieval and reply checks.
 
+## Meetings, the assistant and shared memory
+
+A session is a **class** (tutor for students afterwards) or a **meeting**
+(host and participants). When either ends, the AI writes a recap: summary,
+decisions, action items, open questions. Muse does it on the server; with
+Llama, the host's phone writes it and sends it with `PUT /api/classes/{id}/recap`.
+
+Everything said, recapped and answered goes into **ai-memory**
+([akitaonrails/ai-memory](https://github.com/akitaonrails/ai-memory)), one
+project per session and per person, so a search only sees what the asker
+belongs to. On the VPS it runs as the private container `ai-memory`
+(no public port; the class server reaches it on the Docker network with the
+token in `~/class_tutor/aimem.env`).
+
+The **assistant** (phone app, ✨ button) answers from that memory and proposes
+tasks: calendar event, share text, save note. The same tasks for both brains:
+
+- Meta cloud: `POST /api/assistant`, Muse Spark with tool calling.
+- This phone: Llama reads `GET /api/memory/search` and writes `ACTION {...}` lines.
+
+Calendar and share open the phone's own app, filled in, for the user to confirm.
+
+### The plugin: memory in any local AI app (MCP)
+
+`https://passaly.com/classes/mcp` is an MCP server (Streamable HTTP, JSON
+responses) with `search_memory` and `save_note`. Authenticate with your own
+Passaly Classes key as the bearer token; you see exactly what you see in the
+app. For example, in an MCP client config:
+
+    {"mcpServers": {"passaly": {"url": "https://passaly.com/classes/mcp",
+      "headers": {"Authorization": "Bearer <your key>"}}}}
+
 ## Built with Llama
 
 Llama 3.2 is licensed under the Llama 3.2 Community License, Copyright © Meta
