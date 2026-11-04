@@ -1,0 +1,154 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 716" width="1200" height="716" font-family="Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
+  <title id="t">How a class or meeting flows</title>
+  <desc id="d">Before: the host starts a class or meeting and shares the invite. During: each device captions its own speaker into one live transcript. After: the AI writes the recap and profiles into the shared memory. Later: the tutor answers from the class or sends the question to the teacher, whose answer joins the material; the assistant answers from memory and proposes tasks the user confirms.</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#5b6472"/>
+    </marker>
+    <marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#c84f1c"/>
+    </marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#2e9c6a"/>
+    </marker>
+    <style>
+      .h { font-size: 16px; font-weight: 700; fill: #1f2733; }
+      .s { font-size: 12.5px; fill: #4a5361; }
+      .x { font-size: 13px; fill: #2c3440; }
+      .card { fill: #ffffff; stroke: #d6dbe3; stroke-width: 1.2; }
+      .num { font-size: 15px; font-weight: 700; fill: #ffffff; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="716" fill="#f7f8fa"/>
+  <text x="40" y="44" font-size="24" font-weight="700" fill="#1f2733">How a class or meeting flows</text>
+  <text x="40" y="68" class="s">The same steps with either brain: Muse in Meta's cloud, or Llama on the phone. Everything lands in the same memory.</text>
+
+  <!-- step 1 -->
+  <g transform="translate(40,100)">
+    <rect class="card" width="250" height="200" rx="14"/>
+    <circle cx="30" cy="32" r="16" fill="#EC662E"/><text x="30" y="37" text-anchor="middle" class="num">1</text>
+    <text x="56" y="38" class="h">Before</text>
+    <text x="20" y="74" class="x">The host starts a</text>
+    <text x="20" y="94" class="x"><tspan font-weight="700">class</tspan> or a <tspan font-weight="700">meeting</tspan></text>
+    <text x="20" y="124" class="x">and shares the invite link.</text>
+    <text x="20" y="154" class="s">The call itself runs on Meet,</text>
+    <text x="20" y="172" class="s">Zoom… Files can be added.</text>
+  </g>
+  <line x1="290" y1="200" x2="326" y2="200" stroke="#5b6472" stroke-width="2.2" marker-end="url(#a)"/>
+
+  <!-- step 2 -->
+  <g transform="translate(330,100)">
+    <rect class="card" width="250" height="200" rx="14"/>
+    <circle cx="30" cy="32" r="16" fill="#EC662E"/><text x="30" y="37" text-anchor="middle" class="num">2</text>
+    <text x="56" y="38" class="h">During</text>
+    <text x="20" y="74" class="x">🎙 Each device captions</text>
+    <text x="20" y="94" class="x">only its own speaker.</text>
+    <text x="20" y="124" class="x">Lines join one live,</text>
+    <text x="20" y="144" class="x">labeled transcript.</text>
+    <text x="20" y="174" class="s">No audio or video is stored.</text>
+  </g>
+  <line x1="580" y1="200" x2="616" y2="200" stroke="#5b6472" stroke-width="2.2" marker-end="url(#a)"/>
+
+  <!-- step 3 -->
+  <g transform="translate(620,100)">
+    <rect class="card" width="250" height="200" rx="14"/>
+    <circle cx="30" cy="32" r="16" fill="#EC662E"/><text x="30" y="37" text-anchor="middle" class="num">3</text>
+    <text x="56" y="38" class="h">After: the host ends it</text>
+    <text x="20" y="74" class="x">📝 <tspan font-weight="700">Recap</tspan>: summary,</text>
+    <text x="20" y="94" class="x">decisions, action items,</text>
+    <text x="20" y="114" class="x">open questions.</text>
+    <text x="20" y="144" class="x">👤 <tspan font-weight="700">Profiles</tspan>: how the</text>
+    <text x="20" y="164" class="x">teacher teaches, how each</text>
+    <text x="20" y="184" class="x">student learns (classes).</text>
+  </g>
+  <line x1="870" y1="200" x2="906" y2="200" stroke="#2e9c6a" stroke-width="2.2" marker-end="url(#ag)"/>
+
+  <!-- memory -->
+  <g transform="translate(910,100)">
+    <rect width="250" height="200" rx="14" fill="#eaf7f0" stroke="#2e9c6a" stroke-width="1.8"/>
+    <text x="20" y="38" class="h" fill="#1d6b47">🧠 Shared memory</text>
+    <text x="20" y="70" class="x">transcript · recap</text>
+    <text x="20" y="92" class="x">teacher answers · files</text>
+    <text x="20" y="114" class="x">notes · profiles</text>
+    <text x="20" y="146" class="s">One space per session and</text>
+    <text x="20" y="164" class="s">per person. You only ever see</text>
+    <text x="20" y="182" class="s">what you took part in.</text>
+  </g>
+
+  <!-- step 4 header -->
+  <circle cx="70" cy="356" r="16" fill="#EC662E"/><text x="70" y="361" text-anchor="middle" class="num">4</text>
+  <text x="96" y="362" class="h">Later, any time</text>
+
+  <!-- lane: tutor -->
+  <g transform="translate(40,384)">
+    <rect width="1120" height="150" rx="14" fill="#ffffff" stroke="#d6dbe3"/>
+    <text x="20" y="30" class="h">🎓 Tutor (classes)</text>
+
+    <g transform="translate(20,48)">
+      <rect width="190" height="66" rx="10" fill="#fff4ee" stroke="#f3c6ad"/>
+      <text x="14" y="28" class="x" font-weight="600">Student asks</text>
+      <text x="14" y="48" class="s">"Why a parkway?"</text>
+    </g>
+    <line x1="210" y1="81" x2="246" y2="81" stroke="#5b6472" stroke-width="2" marker-end="url(#a)"/>
+
+    <g transform="translate(250,48)">
+      <path d="M95 0 L190 33 L95 66 L0 33 Z" fill="#fff8e6" stroke="#e5c56a"/>
+      <text x="95" y="30" text-anchor="middle" class="x" font-weight="600">Covered</text>
+      <text x="95" y="47" text-anchor="middle" class="x" font-weight="600">in class?</text>
+    </g>
+
+    <line x1="440" y1="81" x2="496" y2="81" stroke="#2e9c6a" stroke-width="2" marker-end="url(#ag)"/>
+    <text x="452" y="72" class="s" fill="#2e9c6a" font-weight="700">yes</text>
+    <g transform="translate(500,48)">
+      <rect width="250" height="66" rx="10" fill="#eaf7f0" stroke="#9fd6bb"/>
+      <text x="14" y="28" class="x" font-weight="600">Answer in the teacher's style</text>
+      <text x="14" y="48" class="s">her examples, for this student</text>
+    </g>
+
+    <path d="M345 114 L345 128 L945 128 L945 118" fill="none" stroke="#c84f1c" stroke-width="2" marker-end="url(#ao)"/>
+    <text x="356" y="144" class="s" fill="#c84f1c" font-weight="700">no: it never guesses, the teacher gets the question</text>
+    <g transform="translate(790,48)">
+      <rect width="310" height="66" rx="10" fill="#fff4ee" stroke="#f3c6ad"/>
+      <text x="14" y="28" class="x" font-weight="600">→ Teacher's inbox → she answers</text>
+      <text x="14" y="48" class="s">reaches the student and joins the material</text>
+    </g>
+  </g>
+
+  <!-- lane: assistant -->
+  <g transform="translate(40,552)">
+    <rect width="1120" height="134" rx="14" fill="#ffffff" stroke="#d6dbe3"/>
+    <text x="20" y="30" class="h">✨ Assistant (classes and meetings)</text>
+
+    <g transform="translate(20,48)">
+      <rect width="230" height="66" rx="10" fill="#fff4ee" stroke="#f3c6ad"/>
+      <text x="14" y="28" class="x" font-weight="600">"What do I deliver, and</text>
+      <text x="14" y="48" class="x" font-weight="600">when? Add it to my calendar."</text>
+    </g>
+    <line x1="250" y1="81" x2="286" y2="81" stroke="#5b6472" stroke-width="2" marker-end="url(#a)"/>
+
+    <g transform="translate(290,48)">
+      <rect width="220" height="66" rx="10" fill="#eaf7f0" stroke="#9fd6bb"/>
+      <text x="14" y="28" class="x" font-weight="600">Searches your memory</text>
+      <text x="14" y="48" class="s">recaps, files, notes…</text>
+    </g>
+    <line x1="510" y1="81" x2="546" y2="81" stroke="#5b6472" stroke-width="2" marker-end="url(#a)"/>
+
+    <g transform="translate(550,48)">
+      <rect width="240" height="66" rx="10" fill="#e8f1fd" stroke="#9cc2f2"/>
+      <text x="14" y="28" class="x" font-weight="600">Answers + proposes tasks</text>
+      <text x="14" y="48" class="s">Muse (tools) or Llama (ACTION lines)</text>
+    </g>
+    <line x1="790" y1="81" x2="826" y2="81" stroke="#5b6472" stroke-width="2" marker-end="url(#a)"/>
+
+    <g transform="translate(830,48)">
+      <rect width="270" height="66" rx="10" fill="#ffffff" stroke="#EC662E" stroke-width="1.6"/>
+      <text x="14" y="28" class="x" font-weight="600">👆 You tap: 📅 calendar · ↗ share</text>
+      <text x="14" y="48" class="s">nothing runs without your OK</text>
+    </g>
+  </g>
+
+  <!-- memory feeds step 4 -->
+  <line x1="1035" y1="300" x2="1035" y2="378" stroke="#2e9c6a" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ag)"/>
+  <text x="1022" y="352" text-anchor="end" class="s" fill="#2e9c6a" font-weight="700">feeds the tutor, the assistant and the MCP plugin</text>
+</svg>

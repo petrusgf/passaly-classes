@@ -15,6 +15,8 @@ The same idea works for meetings: everyone leaves with a recap, decisions and
 action items, and an assistant that can answer "what did we decide?" weeks
 later.
 
+![How a class or meeting flows](docs/flow.svg)
+
 ---
 
 ## What happens, step by step
@@ -64,15 +66,7 @@ confirmation.
 
 ## Two brains, one memory
 
-```
-                ┌──────────── ai-memory (shared memory) ─────────────┐
-                │  transcripts · recaps · teacher answers · profiles │
-                │  · notes: one space per class/meeting, per person   │
-                └───────▲──────────────────▲──────────────────▲──────┘
-                        │                  │                  │
-        Meta cloud: Muse Spark      This phone: Llama 3.2    Any AI app on a
-        (tool calling)              (on-device, offline)     computer (MCP plugin)
-```
+![Architecture](docs/architecture.svg)
 
 - **Muse Spark** (Meta's cloud model, through the Meta Model API) writes the
   recaps and profiles, answers in the browser, and runs the assistant's tasks
@@ -93,7 +87,7 @@ confirmation.
 
 ### Files in a class or meeting
 Anyone in it can add a PDF, .txt or .md. Everyone in it can read it, and the
-tutor and the assistant use it to answer.
+assistant and connected AI apps use it to answer.
 
 In the app, the choice is one switch: **This phone · Llama** or
 **Meta cloud · Muse**.
@@ -126,7 +120,8 @@ In the app, the choice is one switch: **This phone · Llama** or
 | `static/index.html` | The web page: classes and meetings in the browser, with live captions (Chrome or Edge) |
 | `app/` | The Android app (Flutter): captions, the tutor, the assistant, Llama on the phone |
 | `test_app.py`, `app/test/` | Checks for the whole flow |
-| `README.md` | How to run, build and deploy it |
+| `README.md` | How to run, build and deploy it, the API and the MCP server |
+| `docs/` | The diagrams |
 
 ## Limits today
 
