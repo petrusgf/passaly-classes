@@ -53,7 +53,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
       if (_cloud) {
         final r = await Api.assistant(history, now);
         reply = '${r['reply']}';
-        actions = [for (final a in (r['actions'] as List)) if (validAction(a as Map) case final v?) v];
+        actions = [for (final a in (r['actions'] as List)) ?validAction(a as Map)];
       } else {
         final memory = await Api.searchMemory(text).catchError((_) => <Map<String, dynamic>>[]);
         final sub = Llama.partials.listen((d) => setState(() => _streamed += d));
