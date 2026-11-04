@@ -113,13 +113,21 @@ answers, documents added to their classes and meetings, notes and profiles.
 | `add_document` | A markdown document into one of your classes or meetings |
 
 The same files are MCP **resources** (`resources/list`, `resources/read`).
-Authenticate with your own Passaly Classes key as the bearer token; you see
-exactly what you see in the app, nothing of anyone else's. Cloud agents work
-too (Claude custom connectors: put the header under *Request headers*). For
-example, in an MCP client config:
+**Authentication: MCP tokens.** Create one per AI app on the web page
+("Connect an AI app") or in the app (menu → Connect an AI app). A token is:
+
+- separate from the login key (which `/mcp` refuses),
+- shown once and stored only as its SHA-256,
+- read-only unless "allow it to add notes and documents" was ticked
+  (read-only tokens do not even list the write tools),
+- revocable at any time, and expires after 90 days.
+
+It sees exactly what its owner sees in the app, nothing of anyone else's.
+Cloud agents work too (Claude custom connectors: put the header under
+*Request headers*). For example, in an MCP client config:
 
     {"mcpServers": {"passaly": {"url": "https://passaly.com/classes/mcp",
-      "headers": {"Authorization": "Bearer <your key>"}}}}
+      "headers": {"Authorization": "Bearer pcm_<your token>"}}}}
 
 ## Built with Llama
 

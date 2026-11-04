@@ -88,7 +88,8 @@ confirmation.
   hosts *your* files: recaps, transcripts, answers, the documents added to
   your classes and meetings, notes. Any AI app or cloud agent that supports
   MCP (Claude, LM Studio, Muse Code…) can list, read, search and add to them,
-  with your own key, and only yours.
+  and only yours. Each app gets its own **MCP token**: shown once,
+  read-only unless you allow writing, revocable, expiring after 90 days.
 
 ### Files in a class or meeting
 Anyone in it can add a PDF, .txt or .md. Everyone in it can read it, and the
@@ -110,6 +111,8 @@ In the app, the choice is one switch: **This phone · Llama** or
 - **The tutor doesn't guess.** Anything the class didn't cover goes to a
   human, the teacher.
 - **Tasks need a tap**, and calendar events are confirmed in the calendar app.
+- **AI apps use their own tokens**, never your login: stored only as a hash,
+  read-only by default, revocable and expiring.
 - **Llama 3.2** is used under Meta's Llama 3.2 Community License; the app
   shows "Built with Llama" and the license.
 
