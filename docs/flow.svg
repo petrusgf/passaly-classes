@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 716" width="1200" height="716" font-family="Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 866" width="1200" height="866" font-family="Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
   <title id="t">How a class or meeting flows</title>
-  <desc id="d">Before: the host starts a class or meeting and shares the invite. During: each device captions its own speaker into one live transcript. After: the AI writes the recap and profiles into the shared memory. Later: the tutor answers from the class or sends the question to the teacher, whose answer joins the material; the assistant answers from memory and proposes tasks the user confirms.</desc>
+  <desc id="d">Before: the host starts a class or meeting and shares the invite. During: each device captions its own speaker into one live transcript. After: the AI writes the recap and profiles into the shared memory. Later: the tutor answers from the class or sends the question to the teacher, whose answer joins the material; the assistant answers from memory and proposes actions the user confirms. Tasks: added in the room, by the assistant or by an agent, written to memory as tasks/&lt;id&gt;.md, done by an agent that reports the result.</desc>
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0 0L10 5L0 10z" fill="#5b6472"/>
@@ -20,7 +20,7 @@
     </style>
   </defs>
 
-  <rect width="1200" height="716" fill="#f7f8fa"/>
+  <rect width="1200" height="866" fill="#f7f8fa"/>
   <text x="40" y="44" font-size="24" font-weight="700" fill="#1f2733">How a class or meeting flows</text>
   <text x="40" y="68" class="s">The same steps with either brain: Muse in Meta's cloud, or Llama on the phone. Everything lands in the same memory.</text>
 
@@ -136,7 +136,7 @@
 
     <g transform="translate(550,48)">
       <rect width="240" height="66" rx="10" fill="#e8f1fd" stroke="#9cc2f2"/>
-      <text x="14" y="28" class="x" font-weight="600">Answers + proposes tasks</text>
+      <text x="14" y="28" class="x" font-weight="600">Answers + proposes actions</text>
       <text x="14" y="48" class="s">Muse (tools) or Llama (ACTION lines)</text>
     </g>
     <line x1="790" y1="81" x2="826" y2="81" stroke="#5b6472" stroke-width="2" marker-end="url(#a)"/>
@@ -145,6 +145,35 @@
       <rect width="270" height="66" rx="10" fill="#ffffff" stroke="#EC662E" stroke-width="1.6"/>
       <text x="14" y="28" class="x" font-weight="600">👆 You tap: 📅 calendar · ↗ share</text>
       <text x="14" y="48" class="s">nothing runs without your OK</text>
+    </g>
+  </g>
+
+  <!-- lane: tasks -->
+  <g transform="translate(40,702)">
+    <rect width="1120" height="134" rx="14" fill="#ffffff" stroke="#d6dbe3"/>
+    <text x="20" y="30" class="h">✅ Tasks (for people and agents)</text>
+    <g transform="translate(20,48)">
+      <rect width="230" height="66" rx="10" fill="#fff4ee" stroke="#f3c6ad"/>
+      <text x="14" y="28" class="x" font-weight="600">Added in the room,</text>
+      <text x="14" y="48" class="s">by the assistant or by an agent</text>
+    </g>
+    <line x1="250" y1="81" x2="286" y2="81" stroke="#5b6472" stroke-width="2" marker-end="url(#a)"/>
+    <g transform="translate(290,48)">
+      <rect width="220" height="66" rx="10" fill="#eaf7f0" stroke="#9fd6bb"/>
+      <text x="14" y="28" class="x" font-weight="600">Memory: tasks/&lt;id&gt;.md</text>
+      <text x="14" y="48" class="s">status · due · details · how to</text>
+    </g>
+    <line x1="510" y1="81" x2="546" y2="81" stroke="#5b6472" stroke-width="2" marker-end="url(#a)"/>
+    <g transform="translate(550,48)">
+      <rect width="240" height="66" rx="10" fill="#f3eefd" stroke="#cdbdf3"/>
+      <text x="14" y="28" class="x" font-weight="600">🤖 Agent over MCP</text>
+      <text x="14" y="48" class="s">list_tasks → does the work</text>
+    </g>
+    <line x1="790" y1="81" x2="826" y2="81" stroke="#5b6472" stroke-width="2" marker-end="url(#a)"/>
+    <g transform="translate(830,48)">
+      <rect width="270" height="66" rx="10" fill="#ffffff" stroke="#EC662E" stroke-width="1.6"/>
+      <text x="14" y="28" class="x" font-weight="600">update_task → done + result</text>
+      <text x="14" y="48" class="s">shows in the room and in memory</text>
     </g>
   </g>
 

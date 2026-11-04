@@ -58,9 +58,24 @@ and proposes **tasks**:
 | Add a calendar event | Opens the phone's calendar with the event filled in |
 | Share text | Opens the share sheet (email, WhatsApp…) with the recap |
 | Save a note | Saves it to the person's memory |
+| Add a task | Adds it to the class's or meeting's task list (or a personal one) |
 
-**Nothing runs until the user taps it**, and the calendar still asks for
-confirmation.
+Calendar and share wait for the user's tap, and the calendar still asks for
+confirmation. Notes and tasks are saved straight away.
+
+### 6. Tasks: for people and for agents
+"Add a task in this meeting: translate the FAQ to Portuguese by Monday."
+
+A task can be added three ways: the **Add task** button in the room, asking
+the assistant, or an AI agent over MCP. Everyone in the class or meeting sees
+it; a personal task is only yours.
+
+Every task is also a page in that meeting's memory, `tasks/<id>.md`, with
+its status, who added it, the due date, the details and how to update it.
+An agent connected over MCP reads it, does the work, and reports back:
+`list_tasks` → `update_task` (in progress → done, with a result). The result
+shows up in the room and in the memory page. Read-only tokens can see tasks
+but not change them.
 
 ---
 
@@ -83,7 +98,7 @@ confirmation.
 - **The plugin**: `https://passaly.com/classes/mcp` is an MCP server that
   hosts *your* files: recaps, transcripts, answers, the documents added to
   your classes and meetings, notes. Any AI app or cloud agent that supports
-  MCP (Claude, LM Studio, Muse Code…) can list, read, search and add to them,
+  MCP (Claude, LM Studio, Muse Code…) can list, read, search and add to them, and pick up and finish tasks,
   and only yours. Each app gets its own **MCP token**: shown once,
   read-only unless you allow writing, revocable, expiring after 90 days.
 
@@ -107,7 +122,8 @@ In the app, the choice is one switch: **This phone · Llama** or
   the teacher can see them and answer what the class didn't cover.
 - **The tutor doesn't guess.** Anything the class didn't cover goes to a
   human, the teacher.
-- **Tasks need a tap**, and calendar events are confirmed in the calendar app.
+- **Calendar and share need a tap**, and calendar events are confirmed in the calendar app.
+- **Agents only change tasks with a write token**; read-only tokens can just look.
 - **AI apps use their own tokens**, never your login: stored only as a hash,
   read-only by default, revocable and expiring.
 - **Llama 3.2** is used under Meta's Llama 3.2 Community License; the app
@@ -119,7 +135,7 @@ In the app, the choice is one switch: **This phone · Llama** or
 
 | Part | What it is |
 |---|---|
-| `app.py`, `models.py`, `memory.py` | The server (Python, FastAPI, SQLite): classes, transcript, questions, recaps, the assistant, the MCP plugin |
+| `app.py`, `models.py`, `memory.py` | The server (Python, FastAPI, SQLite): classes, transcript, questions, recaps, the assistant, tasks, the MCP plugin |
 | `static/index.html` | The web page: classes and meetings in the browser, with live captions (Chrome or Edge) |
 | `app/` | The Android app (Flutter): captions, the tutor, the assistant, Llama on the phone |
 | `test_app.py`, `app/test/` | Checks for the whole flow |
@@ -130,7 +146,7 @@ In the app, the choice is one switch: **This phone · Llama** or
 
 - **Android only** for the app. The web page works on any computer with
   Chrome or Edge.
-- **Llama on the phone is weaker at tasks** than Muse. Use the 3B model for
+- **Llama on the phone is weaker at the assistant's actions** than Muse. Use the 3B model for
   the assistant.
 - **Memory search matches words.** When nothing matches, the assistant reads
   your latest recaps instead.
