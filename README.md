@@ -69,22 +69,23 @@ Two containers on the VPS's Docker network `answer-net`, behind its nginx:
 On the server, `~/class_tutor` holds the code and three private files (mode
 600, never in git): `meta.env` (Muse settings and key), `aimem.env`
 (ai-memory's token), `classes-mem.env` (address and token for the class
-server). Data lives in the volumes `classes_data` (SQLite and uploads) and
+server), and `google.env` (Google sign-in client, optional). Data lives in the volumes `classes_data` (SQLite and uploads) and
 `ai-memory-data`.
 
 Redeploy after a change:
 
     rsync -a --exclude .venv --exclude app --exclude .git --exclude files \
       --exclude '*.db' --exclude '*.env' ./ ubuntu@<vps>:class_tutor/
-    ssh ubuntu@<vps> 'cd ~/class_tutor && docker build -q -t class-tutor . &&
-      docker rm -f classes && docker run -d --name classes --network answer-net \
-      --restart unless-stopped -v classes_data:/data \
-      --env-file meta.env --env-file classes-mem.env class-tutor'
+    ssh ubuntu@<vps> 'cd ~/class_tutor && docker build -q -t class-tutor . && ~/run-classes.sh'
 
 Helper scripts in the server's home folder:
 
 - `./set-meta-key.sh` asks for the Meta Model API key (hidden), tests it with
   one tiny request, saves it in `meta.env` and restarts `classes`.
+- `./run-classes.sh` (from `deploy/`) restarts `classes` with every settings
+  file that exists.
+- `./set-google.sh` (from `deploy/`) asks for the Google OAuth client ID and
+  secret (hidden), saves them in `google.env` and restarts `classes`.
 - `./fetch-llama.sh` asks for a Hugging Face token (hidden; Meta's license
   must be accepted on the model pages first), downloads both Llama files to
   `/classes/models/`, and keeps a file only if its SHA-256 matches `index.json`.
@@ -166,6 +167,28 @@ how to update it), rewritten on every change, so agents find it with
 `list_files` / `search_memory` too. An agent works through `list_tasks`, then
 `update_task` (in_progress → done, with a `result`); the room shows the result.
 
+**Google sign-in and Meet transcripts.** "Sign in with Google" asks once for
+`openid email profile` and `meetings.space.created`. With it, starting a
+meeting can create a Google Meet link whose transcript turns on by itself
+when the host joins (`autoTranscriptionGeneration: ON`). After the meeting
+the server reads Meet's transcript, speaker by speaker, into the session's
+lines, then writes the recap, tasks and memory as usual. It checks every
+minute for up to 30 minutes, since Meet finishes the transcript after
+everyone leaves; the host can also press "Fetch Meet transcript". Only what
+was said in the meeting comes in. Needs:
+- a Google Workspace plan with Meet transcripts for the host (Business
+  Standard or higher, Workspace Individual, Education Plus…; [editions](https://support.google.com/meet/answer/12849897));
+- a Google Cloud project with the Google Meet REST API enabled, an OAuth
+  consent screen (External, Testing, with the testers as test users) and a
+  Web client whose redirect URI is `https://passaly.com/classes/api/google/callback`
+  ([consent screen](https://developers.google.com/workspace/guides/configure-oauth-consent),
+  [client](https://developers.google.com/workspace/guides/create-credentials)).
+  In Testing, a sign-in lasts 7 days, then sign in again.
+
+Docs: [OpenID Connect](https://developers.google.com/identity/openid-connect/openid-connect),
+[Meet spaces](https://developers.google.com/workspace/meet/api/reference/rest/v2/spaces),
+[Meet transcripts](https://developers.google.com/workspace/meet/api/guides/artifacts).
+
 **Memory.** [ai-memory](https://github.com/akitaonrails/ai-memory) over its
 MCP endpoint (`memory_write_page`, `memory_query`, `memory_read_page`,
 `memory_recent`). Spaces are `session-<id>` and `person-<id>`; a search only
@@ -225,17 +248,21 @@ For a Claude custom connector, put the header under *Request headers*
 
 ## API
 
-All `/api` calls send `X-Person-Key` (from `POST /api/people`).
+All `/api` calls send `X-Person-Key` (from `POST /api/people`, or from
+signing in with Google).
 `/mcp` takes an MCP token instead.
 
 | Method | Path | What |
 |---|---|---|
 | POST | `/api/people` | Sign in with a name → key |
+| GET | `/api/google/start` · `/api/google/callback` | Sign in with Google → key (in the URL fragment) |
+| GET | `/api/me` | Who I am; signed in with Google; can create Meet links |
 | POST · GET | `/api/classes` | Start a class or meeting · my sessions |
 | POST | `/api/classes/join/{token}` | Join with an invite |
 | GET | `/api/classes/{id}` | One session, its people and recap |
 | POST · GET | `/api/classes/{id}/lines` | Add a caption line · new lines since `after` |
-| POST | `/api/classes/{id}/end` | End it (host); starts recap and profiles |
+| POST | `/api/classes/{id}/end` | End it (host); starts recap and profiles (a Meet meeting first waits for Meet's transcript) |
+| POST | `/api/classes/{id}/meet-transcript` | Fetch Meet's transcript now (host) |
 | PUT | `/api/classes/{id}/recap` | Recap written on the host's phone |
 | POST | `/api/classes/{id}/ask` | Tutor question, answered by Muse |
 | POST · GET | `/api/classes/{id}/questions` | A question the phone answered · questions |
@@ -250,7 +277,7 @@ All `/api` calls send `X-Person-Key` (from `POST /api/people`).
 | POST | `/api/assistant` | Assistant with Muse: reply + proposed tasks |
 | POST · GET | `/api/tasks` | Add a task · tasks I can see (`?status=`, `?session_id=`) |
 | PATCH | `/api/tasks/{id}` | Change status, record a result |
-| GET | `/api/tutor` | Is a cloud model set up? Which? |
+| GET | `/api/tutor` | Is a cloud model set up? Which? Is Google sign-in on? |
 | POST · GET · DELETE | `/api/mcp/tokens` | Create · list · revoke MCP tokens |
 | POST | `/mcp` | The MCP server |
 

@@ -79,7 +79,7 @@ with TestClient(app.app) as c:
     assert len(c.get(f"/api/classes/{cid}/questions", headers=siena).json()) == 3
     assert len(c.get(f"/api/classes/{cid}/questions", headers=gio).json()) == 3
     assert c.get("/join/abc").status_code == 200  # the page handles invite links
-    assert c.get("/api/tutor").json() == {"cloud": True, "model": app.TUTOR_MODEL}
+    assert c.get("/api/tutor").json() == {"cloud": True, "model": app.TUTOR_MODEL, "google": False}
 
     # --- the phone app: Llama answers on the phone, the server only stores -------
     pack = c.get(f"/api/classes/{cid}/pack", headers=siena).json()
@@ -383,6 +383,98 @@ with TestClient(app.app) as c:
     assert any(f["uri"].endswith(f"/tasks/{tid}.md") for f in files["files"])
 
 memory.URL = ""
+
+# --- Google: sign in, a Meet link with the transcript on, its transcript after ----
+import base64 as _b64  # noqa: E402
+import json as _json  # noqa: E402
+
+
+def _jwt(claims):
+    return "h." + _b64.urlsafe_b64encode(_json.dumps(claims).encode()).decode().rstrip("=") + ".s"
+
+
+app.GOOGLE_ID, app.GOOGLE_SECRET = "cid", "secret"
+app.GOOGLE_REDIRECT, app.GOOGLE_HOME = "http://testserver/api/google/callback", "http://testserver/"
+google_calls, meet_calls = [], []
+meet_state = {"ended": False}
+
+
+async def fake_token(data):
+    google_calls.append(data)
+    if data["grant_type"] == "authorization_code":
+        sub = {"good": "g-ana", "nomeet": "g-bob", "evil": "g-eve"}[data["code"]]
+        claims = {"sub": sub, "name": sub[2:].capitalize(), "aud": "other" if sub == "g-eve" else "cid",
+                  "iss": "https://accounts.google.com"}
+        return {"id_token": _jwt(claims), "refresh_token": "r-" + sub,
+                "scope": "openid email" + ("" if sub == "g-bob" else " " + app.MEET_SCOPE)}
+    return {"access_token": "a-" + data["refresh_token"]}
+
+
+async def fake_meet(method, path, access, **kw):
+    meet_calls.append((method, path, access, kw))
+    if path == "/spaces":
+        return {"name": "spaces/s1", "meetingUri": "https://meet.google.com/abc-defg-hij"}
+    if path == "/conferenceRecords":
+        assert kw["params"]["filter"] == 'space.name = "spaces/s1"'
+        return {"conferenceRecords": [{"name": "conferenceRecords/c1", "startTime": "2026-11-04T10:00:00Z",
+                                       **({"endTime": "2026-11-04T10:30:00Z"} if meet_state["ended"] else {})}]}
+    if path == "/conferenceRecords/c1/transcripts":
+        return {"transcripts": [{"name": "conferenceRecords/c1/transcripts/t1", "state": "ENDED"}]}
+    if path.endswith("/entries"):
+        if not kw["params"].get("pageToken"):
+            return {"transcriptEntries": [{"participant": "conferenceRecords/c1/participants/p2", "text": "I'll write the FAQ.",
+                                           "startTime": "2026-11-04T10:02:00Z"}], "nextPageToken": "n"}
+        return {"transcriptEntries": [{"participant": "conferenceRecords/c1/participants/p1", "text": "Who writes the FAQ?",
+                                       "startTime": "2026-11-04T10:01:00Z"}]}
+    if path == "/conferenceRecords/c1/participants/p1":
+        return {"signedinUser": {"user": "users/1", "displayName": "Ana"}}
+    if path == "/conferenceRecords/c1/participants/p2":
+        return {"anonymousUser": {"displayName": "Guest Leo"}}
+    raise AssertionError(path)
+
+
+app._google_token, app._meet, app.MEET_POLL_SECONDS = fake_token, fake_meet, 0
+app._llm = fake_llm
+
+with TestClient(app.app) as c:
+    assert c.get("/api/tutor").json()["google"] is True
+    start = c.get("/api/google/start", follow_redirects=False)
+    assert start.headers["location"].startswith("https://accounts.google.com/o/oauth2/v2/auth?")
+    assert "access_type=offline" in start.headers["location"] and "meetings.space.created" in start.headers["location"]
+
+    def google_signin(code, st=None):
+        c.get("/api/google/start", follow_redirects=False)  # each sign-in gets a fresh one-time state
+        r = c.get(f"/api/google/callback?code={code}&state={st or c.cookies['pc_gstate']}", follow_redirects=False)
+        return r.headers["location"]
+
+    assert google_signin("good", "forged").endswith("#signin-failed")  # state must match the cookie
+    c.get("/api/google/start", follow_redirects=False)
+    assert c.get(f"/api/google/callback?code=evil&state={c.cookies['pc_gstate']}").status_code == 400  # token for another app
+    loc = google_signin("good")
+    assert loc.startswith("http://testserver/#signin=")
+    ana = {"X-Person-Key": loc.split("#signin=")[1]}
+    assert c.get("/api/me", headers=ana).json() == {"id": c.get("/api/me", headers=ana).json()["id"],
+                                                    "name": "Ana", "google": True, "meet": True}
+    assert google_signin("good") == loc  # same Google account, same person
+    bob = {"X-Person-Key": google_signin("nomeet").split("#signin=")[1]}
+    assert c.get("/api/me", headers=bob).json()["meet"] is False  # Meet scope unticked
+    assert c.post("/api/classes", headers=bob, json={"title": "x", "kind": "meeting", "google_meet": True}).status_code == 409
+
+    m = c.post("/api/classes", headers=ana, json={"title": "FAQ sync", "kind": "meeting", "google_meet": True}).json()
+    assert m["call_url"] == "https://meet.google.com/abc-defg-hij" and m["meet"] is True
+    assert meet_calls[0][3]["json"]["config"]["artifactConfig"]["transcriptionConfig"]["autoTranscriptionGeneration"] == "ON"
+    assert meet_calls[0][2] == "a-r-g-ana"
+    # still running: nothing to fetch yet
+    assert c.post(f"/api/classes/{m['id']}/meet-transcript", headers=ana).status_code == 409
+    meet_state["ended"] = True
+    c.post(f"/api/classes/{m['id']}/end", headers=ana)  # the background wait picks it up
+    lines = c.get(f"/api/classes/{m['id']}/lines", headers=ana).json()["lines"]
+    assert [(l["name"], l["role"], l["text"]) for l in lines] == [
+        ("Ana", "teacher", "Who writes the FAQ?"), ("Guest Leo", "student", "I'll write the FAQ.")]
+    assert c.get(f"/api/classes/{m['id']}", headers=ana).json()["recap"]  # recap made from Meet's words
+    # importing again does not duplicate
+    assert c.post(f"/api/classes/{m['id']}/meet-transcript", headers=ana).json() == {"lines": 2}
+    assert len(c.get(f"/api/classes/{m['id']}/lines", headers=ana).json()["lines"]) == 2
 
 # --- a slow real AI: profiles being written must not lock out a student asking ---
 import asyncio  # noqa: E402

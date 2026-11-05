@@ -31,6 +31,13 @@ Each person's own phone or browser listens to **its own speaker only** and
 turns their voice into text. Every line goes to the server labeled with who
 said it, so everyone sees one shared, live transcript.
 
+**Or let Google Meet do it.** Sign in with Google and a new meeting gets a
+Google Meet link with Meet's transcript turned on. Nobody needs our page open
+during the call: when the meeting ends, Meet's transcript (who said what)
+comes back here by itself and the recap follows. Only what was said in the
+meeting comes in. This needs a Google Workspace plan that has Meet
+transcripts.
+
 ### 3. After: the recap and the profiles
 When the host ends it, the AI writes:
 
@@ -150,5 +157,5 @@ In the app, the choice is one switch: **This phone · Llama** or
   the assistant.
 - **Memory search matches words.** When nothing matches, the assistant reads
   your latest recaps instead.
-- **Accounts are a name and a key** for the demo. The plan is to move it into
+- **Accounts are a name and a key**, or a Google sign-in, for the demo. The plan is to move it into
   Passaly, with real logins, after the hackathon.

@@ -38,6 +38,13 @@ const $ = (sel, el = document) => el.querySelector(sel);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const view = $('#view');
 let me = JSON.parse(localStorage.getItem('person') || 'null');
+let signinNote = '';
+// Back from Google: the key arrives in the fragment, which never reaches a server.
+if (location.hash.startsWith('#signin=')) {
+  me = {key: location.hash.slice(8)}; history.replaceState(null, '', location.pathname);
+} else if (location.hash === '#signin-failed') {
+  signinNote = 'Google sign-in did not finish. Try again.'; history.replaceState(null, '', location.pathname);
+}
 let timers = [];
 // Served at / locally and at /classes on passaly.com (nginx strips the prefix).
 const ROOT = location.pathname.startsWith('/classes') ? '/classes' : '';
@@ -59,7 +66,11 @@ document.addEventListener('click', e => {
   if (a) { e.preventDefault(); go(a.getAttribute('href')); }
 });
 
-function route() {
+async function route() {
+  if (me && !me.name) {
+    try { me = {...await api('GET', '/api/me'), key: me.key}; localStorage.setItem('person', JSON.stringify(me)); }
+    catch { me = null; }
+  }
   timers.forEach(clearInterval); timers = [];
   stopCaptions();
   $('#me').textContent = me ? `Signed in as ${me.name}` : '';
@@ -81,8 +92,14 @@ function askName() {
         <form id="f"><label class="form-label">Your name</label>
           <input class="form-control mb-3" name="name" maxlength="60" required autofocus>
           <button class="btn btn-primary w-100">Continue</button></form>
-        <div class="text-danger small mt-2" id="err"></div>
+        <div id="google" class="mt-3"></div>
+        <div class="text-danger small mt-2" id="err">${esc(signinNote)}</div>
       </div></div></div></div>`;
+  api('GET', '/api/tutor').then(t => {
+    if (t.google) $('#google').innerHTML = `<div class="text-center small text-body-secondary mb-2">or</div>
+      <a class="btn btn-outline-dark w-100" href="${ROOT}/api/google/start">Sign in with Google</a>
+      <div class="small text-body-secondary mt-2">With Google, meetings get a Google Meet link whose transcript comes back here by itself.</div>`;
+  }).catch(() => {});
   $('#f').onsubmit = async e => {
     e.preventDefault();
     try {
@@ -116,7 +133,10 @@ async function home() {
             <option value="en-US">English (US)</option><option value="en-CA">English (Canada)</option>
             <option value="pt-BR">Português (Brasil)</option><option value="es-ES">Español</option>
             <option value="fr-CA">Français (Canada)</option></select>
-          <input class="form-control mb-3" name="call_url" placeholder="Video call link (Meet, Zoom), optional">
+          ${me.meet ? `<div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="google_meet" id="gm" checked>
+            <label class="form-check-label small" for="gm">Create a Google Meet link with the transcript on:
+              what is said there comes back here after the meeting</label></div>` : ''}
+          <input class="form-control mb-3" name="call_url" placeholder="Video call link (Meet, Zoom), optional" ${me.meet ? 'hidden' : ''}>
           <button class="btn btn-primary w-100">Create</button>
         </form><div class="text-danger small mt-2" id="err"></div>
       </div></div>
@@ -147,9 +167,11 @@ async function home() {
     } catch (x) { alert(x.message); }
   };
   renderTokens();
+  if ($('#gm')) $('#gm').onchange = e => { $('[name=call_url]').hidden = e.target.checked; };
   $('#f').onsubmit = async e => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
+    f.google_meet = !!f.google_meet;
     try { const c = await api('POST', '/api/classes', f); go(`/class/${c.id}`); }
     catch (x) { $('#err').textContent = x.message; }
   };
@@ -211,6 +233,7 @@ async function room(id) {
   try { c = await api('GET', `/api/classes/${id}`); }
   catch (x) { view.innerHTML = `<div class="alert alert-warning">${esc(x.message)}</div>`; return; }
   const teacher = c.role === 'teacher', live = c.status === 'live', meeting = c.kind === 'meeting';
+  const captions = live && !c.meet;  // a Google Meet meeting brings its own transcript
   const invite = `${location.origin}${ROOT}/join/${c.invite_token}`;
   lastLine = 0;
   view.innerHTML = `
@@ -244,12 +267,15 @@ async function room(id) {
       <div class="col-lg-7"><div class="card shadow-sm"><div class="card-body">
         <div class="d-flex align-items-center mb-2">
           <h2 class="h6 mb-0 me-auto">Live transcript</h2>
-          ${live ? `<button class="btn btn-sm btn-primary" id="mic">Start my captions</button>` : ''}
+          ${captions ? `<button class="btn btn-sm btn-primary" id="mic">Start my captions</button>` : ''}
+          ${c.meet && teacher && !live ? `<button class="btn btn-sm btn-outline-primary" id="meetT">Fetch Meet transcript</button>` : ''}
         </div>
-        <div id="micNote" class="small text-body-secondary mb-2"></div>
+        <div id="micNote" class="small text-body-secondary mb-2">${c.meet ? (live
+          ? 'Google Meet writes the transcript (it starts when the host joins). It comes here after the meeting, then the recap.'
+          : 'From Google Meet\'s transcript. It can take a few minutes after everyone leaves.') : ''}</div>
         <div class="transcript border rounded p-2 bg-white" id="lines"></div>
         <div class="interim small mt-1" id="interim"></div>
-        ${live ? `<form id="typed" class="input-group input-group-sm mt-2">
+        ${captions ? `<form id="typed" class="input-group input-group-sm mt-2">
           <input class="form-control" name="text" maxlength="1000" placeholder="Or type a line">
           <button class="btn btn-outline-secondary">Add</button></form>` : ''}
       </div></div></div>
@@ -270,7 +296,13 @@ async function room(id) {
                          : 'End the class? The transcript closes and the tutor learns from it.')) return;
     await api('POST', `/api/classes/${id}/end`); route();
   };
-  if (live) {
+  if ($('#meetT')) $('#meetT').onclick = async () => {
+    try { const r = await api('POST', `/api/classes/${id}/meet-transcript`);
+          $('#micNote').textContent = r.lines ? `${r.lines} lines from Meet. The recap follows in a minute.`
+                                              : 'Meet made no transcript for this meeting.'; pullLines(id); }
+    catch (x) { $('#micNote').textContent = x.message; }
+  };
+  if (captions) {
     $('#mic').onclick = () => wantCaptions ? stopCaptions() : startCaptions(id, c.lang);
     $('#typed').onsubmit = async e => {
       e.preventDefault(); const t = e.target.text.value.trim(); if (!t) return;

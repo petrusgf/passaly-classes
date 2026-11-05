@@ -13,6 +13,7 @@ auth.get_current_user, and the Person table goes away.
 """
 
 import asyncio
+import base64
 import hashlib
 import io
 import json
@@ -23,9 +24,12 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlencode
+
+import httpx
 
 from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -129,6 +133,170 @@ def _clean_block(raw, limit: int, what: str) -> str:
 
 def _name(user: AnswerUser) -> str:
     return user.display_name or user.username
+
+
+# --- Google: sign in, Meet links, Meet transcripts --------------------------------
+# One OAuth consent gives both: who you are (openid) and the right to create
+# Meet links whose transcripts this app can read (meetings.space.created).
+# Docs: developers.google.com/identity/openid-connect/openid-connect,
+# developers.google.com/workspace/meet/api/guides/artifacts
+
+GOOGLE_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REDIRECT = os.getenv("GOOGLE_REDIRECT_URI", "https://passaly.com/classes/api/google/callback")
+GOOGLE_HOME = GOOGLE_REDIRECT.removesuffix("api/google/callback")
+MEET_SCOPE = "https://www.googleapis.com/auth/meetings.space.created"
+MEET_API = "https://meet.googleapis.com/v2"
+MEET_POLL_SECONDS = 60
+MEET_POLLS = 30  # Meet writes the transcript once everyone has left: wait up to 30 min.
+
+
+async def _google_token(data: dict) -> dict:
+    async with httpx.AsyncClient(timeout=20) as c:
+        r = await c.post("https://oauth2.googleapis.com/token", data=data)
+    if r.status_code != 200:
+        raise HTTPException(409, "Google refused the sign-in; sign in with Google again")
+    return r.json()
+
+
+async def _meet(method: str, path: str, access: str, **kw) -> dict:
+    async with httpx.AsyncClient(timeout=20) as c:
+        r = await c.request(method, MEET_API + path, headers={"Authorization": f"Bearer {access}"}, **kw)
+    if r.status_code >= 400:
+        msg = (r.json().get("error", {}) if r.headers.get("content-type", "").startswith("application/json") else {})
+        raise HTTPException(502, f"Google Meet: {msg.get('message') or r.status_code}")
+    return r.json()
+
+
+def _id_claims(id_token: str) -> dict:
+    # It came straight from Google's token endpoint over HTTPS with our secret,
+    # so per Google's OpenID guide it needs no signature check; aud/iss still checked.
+    part = id_token.split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+    if claims.get("aud") != GOOGLE_ID or claims.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
+        raise HTTPException(400, "Not a sign-in for this app")
+    return claims
+
+
+async def _google_access(db, person: Person) -> str:
+    if not person or not person.google_refresh:
+        raise HTTPException(409, "Sign in with Google to use Google Meet")
+    refresh = person.google_refresh
+    await db.commit()  # no transaction across Google's calls
+    tok = await _google_token({"client_id": GOOGLE_ID, "client_secret": GOOGLE_SECRET,
+                               "refresh_token": refresh, "grant_type": "refresh_token"})
+    return tok["access_token"]
+
+
+@app.get("/api/google/start")
+async def google_start():
+    if not GOOGLE_ID:
+        raise HTTPException(404, "Google sign-in is not set up on this server")
+    state = secrets.token_urlsafe(16)
+    url = "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode({
+        "client_id": GOOGLE_ID, "redirect_uri": GOOGLE_REDIRECT, "response_type": "code",
+        "scope": f"openid email profile {MEET_SCOPE}", "state": state,
+        "access_type": "offline", "prompt": "consent"})
+    r = RedirectResponse(url)
+    r.set_cookie("pc_gstate", state, max_age=600, httponly=True, samesite="lax",
+                 secure=GOOGLE_REDIRECT.startswith("https://"))
+    return r
+
+
+@app.get("/api/google/callback")
+async def google_callback(request: Request, code: str = "", state: str = "", error: str = "",
+                          db: AsyncSession = Depends(get_db)):
+    if error or not code or not state or state != request.cookies.get("pc_gstate"):
+        return RedirectResponse(GOOGLE_HOME + "#signin-failed")
+    tok = await _google_token({"code": code, "client_id": GOOGLE_ID, "client_secret": GOOGLE_SECRET,
+                               "redirect_uri": GOOGLE_REDIRECT, "grant_type": "authorization_code"})
+    claims = _id_claims(tok["id_token"])
+    p = (await db.execute(select(Person).where(Person.google_sub == claims["sub"]))).scalar_one_or_none()
+    if not p:
+        name = (claims.get("name") or claims.get("email") or "Google user")[:60]
+        p = Person(name=name, key=secrets.token_urlsafe(24), google_sub=claims["sub"])
+        db.add(p)
+    # Meet links need the Meet scope; people may untick it on the consent screen.
+    if tok.get("refresh_token") and MEET_SCOPE in tok.get("scope", "").split():
+        p.google_refresh = tok["refresh_token"]
+    await db.commit()
+    r = RedirectResponse(GOOGLE_HOME + "#signin=" + p.key)  # the fragment never reaches a server
+    r.delete_cookie("pc_gstate")
+    return r
+
+
+@app.get("/api/me")
+async def who_am_i(user: AnswerUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    p = await db.get(Person, int(user.id))
+    return {"id": p.id, "name": p.name, "google": bool(p.google_sub), "meet": bool(p.google_refresh)}
+
+
+async def _new_meet(db, user: AnswerUser) -> dict:
+    """A Meet link whose transcript turns on by itself when the host joins."""
+    access = await _google_access(db, await db.get(Person, int(user.id)))
+    return await _meet("POST", "/spaces", access, json={"config": {"artifactConfig": {
+        "transcriptionConfig": {"autoTranscriptionGeneration": "ON"}}}})
+
+
+def _speaker(p: dict) -> str:
+    for kind in ("signedinUser", "anonymousUser", "phoneUser"):
+        if p.get(kind, {}).get("displayName"):
+            return p[kind]["displayName"]
+    return "Someone"
+
+
+async def _import_meet(db, s: ClassSession) -> int | None:
+    """Meet's transcript, speaker by speaker, into the session's lines.
+    None: Meet has not finished it yet. 0: there was no transcript."""
+    done = (await db.execute(select(func.count()).select_from(ClassLine).where(
+        ClassLine.session_id == s.id, ClassLine.user_id.like("meet:%")))).scalar()
+    if done:
+        return done
+    access = await _google_access(db, await db.get(Person, int(s.teacher_id)))
+    recs = (await _meet("GET", "/conferenceRecords", access,
+                        params={"filter": f'space.name = "{s.meet_space}"'})).get("conferenceRecords", [])
+    if not recs or any(not r.get("endTime") for r in recs):
+        return None
+    entries, names = [], {}
+    for rec in sorted(recs, key=lambda r: r["startTime"]):
+        trs = (await _meet("GET", f"/{rec['name']}/transcripts", access)).get("transcripts", [])
+        if any(t.get("state") == "STARTED" for t in trs):
+            return None
+        for t in trs:
+            page = ""
+            while True:
+                d = await _meet("GET", f"/{t['name']}/entries", access,
+                                params={"pageSize": 100, **({"pageToken": page} if page else {})})
+                entries += d.get("transcriptEntries", [])
+                page = d.get("nextPageToken", "")
+                if not page:
+                    break
+    for e in entries:
+        if e["participant"] not in names:
+            names[e["participant"]] = _speaker(await _meet("GET", f"/{e['participant']}", access))
+    entries.sort(key=lambda e: e["startTime"])
+    for e in entries:
+        name = names[e["participant"]]
+        # ponytail: Meet's speakers are not our accounts; the host is matched by name.
+        db.add(ClassLine(session_id=s.id, user_id="meet:" + e["participant"].rsplit("/", 1)[-1],
+                         name=name, role="teacher" if name == s.teacher_name else "student",
+                         text=e["text"], created_at=datetime.fromisoformat(e["startTime"].replace("Z", "+00:00"))))
+    await db.commit()
+    return len(entries)
+
+
+async def _after_meet(session_id: int):
+    """After a Meet meeting ends: wait for its transcript, then the recap."""
+    for _ in range(MEET_POLLS):
+        async with get_session_factory(DATABASE_URL)() as db:
+            try:
+                n = await _import_meet(db, await db.get(ClassSession, session_id))
+            except HTTPException:
+                n = None
+        if n is not None:
+            break
+        await asyncio.sleep(MEET_POLL_SECONDS)
+    await _update_profiles(session_id)
 
 
 # --- the AI ---------------------------------------------------------------------
@@ -314,7 +482,7 @@ async def _member(db, session_id: int, user: AnswerUser):
 def _session_out(s: ClassSession, role: str) -> dict:
     out = {"id": s.id, "title": s.title, "subject": s.subject, "lang": s.lang,
            "call_url": s.call_url, "status": s.status, "teacher": s.teacher_name,
-           "role": role, "kind": s.kind, "recap": s.recap,
+           "role": role, "kind": s.kind, "recap": s.recap, "meet": bool(s.meet_space),
            "created_at": s.created_at.isoformat()}
     if role == "teacher":
         out["invite_token"] = s.invite_token
@@ -327,6 +495,7 @@ class NewClass(BaseModel):
     lang: str = "en-US"
     call_url: str | None = None
     kind: str = "class"
+    google_meet: bool = False  # create a Meet link with the transcript on
 
 
 @router.post("", status_code=201)
@@ -339,7 +508,10 @@ async def create_class(body: NewClass, user: AnswerUser = Depends(get_current_us
     url = (body.call_url or "").strip() or None
     if url and not url.startswith("https://"):
         raise HTTPException(400, "The call link must start with https://")
-    s = ClassSession(teacher_id=user.id, teacher_name=_name(user),
+    space = await _new_meet(db, user) if body.google_meet else None
+    if space:
+        url = space["meetingUri"]
+    s = ClassSession(meet_space=space and space["name"], teacher_id=user.id, teacher_name=_name(user),
                      title=_clean(body.title, 200, "Title"),
                      subject=(body.subject or "").strip()[:100] or None,
                      lang=body.lang, call_url=url, invite_token=secrets.token_urlsafe(12),
@@ -426,8 +598,27 @@ async def end_class(session_id: int, tasks: BackgroundTasks,
     if s.status == "live":
         s.status = "ended"
         await db.commit()
-        tasks.add_task(_update_profiles, s.id)
+        tasks.add_task(_after_meet if s.meet_space else _update_profiles, s.id)
     return _session_out(s, m.role)
+
+
+@router.post("/{session_id}/meet-transcript")
+async def import_meet_transcript(session_id: int, tasks: BackgroundTasks,
+                                 user: AnswerUser = Depends(get_current_user),
+                                 db: AsyncSession = Depends(get_db)):
+    """Fetch Meet's transcript now, e.g. when the automatic wait gave up."""
+    s, m = await _member(db, session_id, user)
+    if m.role != "teacher" or not s.meet_space:
+        raise HTTPException(404, "No Google Meet transcript for this meeting")
+    n = await _import_meet(db, s)
+    if n is None:
+        raise HTTPException(409, "Meet has not finished the transcript yet. Try again in a few minutes")
+    if n and s.status == "live":
+        s.status = "ended"
+        await db.commit()
+    if n:
+        tasks.add_task(_update_profiles, s.id)
+    return {"lines": n}
 
 
 # --- tutor ----------------------------------------------------------------------
@@ -446,7 +637,8 @@ class Ask(BaseModel):
 @app.get("/api/tutor")
 async def tutor_info():
     """Whether this server has a cloud AI, so the app can offer it."""
-    return {"cloud": bool(TUTOR_API_KEY), "model": TUTOR_MODEL if TUTOR_API_KEY else None}
+    return {"cloud": bool(TUTOR_API_KEY), "model": TUTOR_MODEL if TUTOR_API_KEY else None,
+            "google": bool(GOOGLE_ID)}
 
 
 @router.post("/{session_id}/ask")

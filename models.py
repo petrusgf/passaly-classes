@@ -39,6 +39,11 @@ class Person(Base):
     id = Column(ID, primary_key=True, autoincrement=True)
     name = Column(Text, nullable=False)
     key = Column(Text, nullable=False, unique=True)
+    # Signed in with Google: the account's permanent id ("sub"), and the
+    # refresh token that lets the server create Meet links and read their
+    # transcripts. ponytail: stored as is on the private /data volume.
+    google_sub = Column(Text, index=True)
+    google_refresh = Column(Text)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
@@ -68,6 +73,9 @@ class ClassSession(Base):
     kind = Column(Text, nullable=False, default="class")
     # After it ends: summary, decisions, action items, open questions (markdown).
     recap = Column(Text)
+    # A Google Meet space this app created ("spaces/abc"); its transcript
+    # becomes the lines after the meeting.
+    meet_space = Column(Text)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
@@ -220,7 +228,8 @@ def get_session_factory(database_url: str) -> sessionmaker:
 
 # Columns added after the first deploy: create_all makes new tables only, so
 # an existing database gets these with ALTER TABLE.
-_ADDED = {"class_session": {"kind": "TEXT NOT NULL DEFAULT 'class'", "recap": "TEXT"}}
+_ADDED = {"class_session": {"kind": "TEXT NOT NULL DEFAULT 'class'", "recap": "TEXT", "meet_space": "TEXT"},
+          "person": {"google_sub": "TEXT", "google_refresh": "TEXT"}}
 
 
 async def create_tables(database_url: str):
