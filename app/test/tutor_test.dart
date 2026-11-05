@@ -42,4 +42,16 @@ void main() {
     expect(tail(long, 100).length, 100);
     expect(tail(long, 100), endsWith('sentence number 399'));
   });
+
+  test('a rambling small model is cut to the answer', () {
+    const raw = "why Driveway ? why 'park'? Answer in the language of the question. "
+        "Petrus Gomes: The parkway is a road that goes through a park. "
+        "So we drive on a parkway and park on a driveway. English is funny like that. "
+        "STUDENT'S ANSWER: Why Parkway and why Driveway ? Petrus Gomes: So we drive on a parkway";
+    expect(readReply(raw).answer,
+        'The parkway is a road that goes through a park. So we drive on a parkway and park on a driveway. English is funny like that.');
+    expect(readReply(raw).fromClass, true);
+    expect(readReply('What is a Driveway ?').fromClass, false);
+    expect(readReply('NOT_IN_CLASS because').fromClass, false);
+  });
 }

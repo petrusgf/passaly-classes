@@ -100,12 +100,14 @@ HOW THIS STUDENT LEARNS: ${studentProfile.isEmpty ? 'not known yet' : studentPro
 CLASS NOTES:
 ${material.join('\n---\n')}
 
-STUDENT'S QUESTION: $question''';
+STUDENT'S QUESTION: $question
+
+ANSWER (at most 3 short sentences, no questions):''';
 
 /// (fromClass, answer). The model saying it is not covered, or saying
 /// nothing, sends the question to the teacher.
 ({bool fromClass, String answer}) readReply(String raw) {
-  final t = raw.trim();
+  final t = tidyReply(raw);
   if (t.isEmpty || t.contains(notInClass)) return (fromClass: false, answer: t.replaceAll(notInClass, '').trim());
   return (fromClass: true, answer: t);
 }
@@ -134,3 +136,26 @@ ${tail(lines, 5000)}
 
 THEIR QUESTIONS AFTER CLASS:
 ${asked.isEmpty ? 'none' : asked.join('\n')}''';
+
+/// Small on-device models run on: they echo the prompt's labels, restate the
+/// question and repeat themselves. Keep the answer: cut at an echoed prompt
+/// label, drop questions and "Name:" labels, stop at a repeat, max 3 sentences.
+/// ponytail: a text filter, not a fix in the model; the 3B model needs it less.
+String tidyReply(String raw) {
+  var t = raw;
+  if (t.contains(notInClass)) return notInClass;
+  for (final mark in ["STUDENT'S", 'STUDENT:', 'CLASS NOTES', 'HOW THIS', 'ANSWER (']) {
+    final i = t.indexOf(mark);
+    if (i >= 0) t = t.substring(0, i);
+  }
+  final parts = RegExp(r'[^.!?]+[.!?]*').allMatches(t).map((m) => m.group(0)!.trim()).where((x) => x.isNotEmpty);
+  final out = <String>[];
+  for (var x in parts) {
+    x = x.replaceFirst(RegExp(r"^[A-Z][\w' ]{0,40}:\s*"), '').trim();
+    if (x.isEmpty || x.endsWith('?') || x.startsWith('Answer in the language')) continue;
+    if (out.contains(x)) break;
+    out.add(x);
+    if (out.length == 3) break;
+  }
+  return out.join(' ');
+}
