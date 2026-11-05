@@ -298,9 +298,9 @@ on its "Tutor AI" screen.
 
 ## License
 
-This repository has no open-source license: you are welcome to read it, but
-all rights are reserved. Llama 3.2 stays under Meta's license (above), and
-ai-memory under [its own](https://github.com/akitaonrails/ai-memory).
+The code in this repository is open source under the [MIT License](LICENSE).
+That covers our code only: Llama 3.2 stays under Meta's Llama 3.2 Community
+License (above), and ai-memory under [its own](https://github.com/akitaonrails/ai-memory).
 
 ## Moving into Passaly later
 
