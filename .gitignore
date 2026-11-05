@@ -7,3 +7,4 @@ models/LICENSE.txt
 models/NOTICE.txt
 files/
 brag-output*/
+*.env

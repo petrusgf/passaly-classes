@@ -78,6 +78,23 @@ Redeploy after a change:
       --exclude '*.db' --exclude '*.env' ./ ubuntu@<vps>:class_tutor/
     ssh ubuntu@<vps> 'cd ~/class_tutor && docker build -q -t class-tutor . && ~/run-classes.sh'
 
+Everything to rebuild the server is in [`deploy/`](deploy/), with no secrets
+in it:
+
+| File | What |
+|---|---|
+| `run-classes.sh` | (Re)starts `classes` with every settings file that exists |
+| `run-ai-memory.sh` | (Re)starts `ai-memory`, private on `answer-net`, no published port |
+| `set-meta-key.sh` | Asks for the Meta Model API key (hidden), tests it, writes `meta.env`, restarts `classes` |
+| `set-google.sh` | Asks for the Google OAuth client (secret hidden), writes `google.env`, restarts `classes` |
+| `fetch-llama.sh` | Downloads the Llama 3.2 files for the phone, kept only if the SHA-256 matches |
+| `nginx-classes.conf` | The `/classes/` locations of the nginx server block |
+| `*.env.example` | The four settings files, with placeholders instead of keys |
+
+To rebuild: copy the scripts to the server's home folder, fill the `.env`
+files in `~/class_tutor` (mode 600), add the nginx block, then run
+`run-ai-memory.sh` and `run-classes.sh`.
+
 Helper scripts in the server's home folder:
 
 - `./set-meta-key.sh` asks for the Meta Model API key (hidden), tests it with
