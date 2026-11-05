@@ -282,6 +282,8 @@ Muse Code needs `"schema_version": 1` and the key `mcp_servers` (not
 written by PowerShell starts with one, and Muse Code then reports a malformed
 settings file. Restart it and type `/mcp` to see the tools.
 
+![Different agents, one shared memory](docs/agents.svg)
+
 **Tested with two agents on one memory** (2026-11-04): Muse Code read a
 meeting's tasks, wrote a plan with `add_document` and closed the task with
 `update_task`; Claude Code, connected with its own config, found that plan

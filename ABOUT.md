@@ -109,6 +109,9 @@ but not change them.
   and only yours. Each app gets its own **MCP token**: shown once,
   read-only unless you allow writing, revocable, expiring after 90 days.
 
+### Different agents, one memory
+![Different agents, one shared memory](docs/agents.svg)
+
 ### Tested for real
 - A two-person **Google Meet** meeting: Meet's transcript came back by itself,
   speaker by speaker, and Muse wrote the recap.

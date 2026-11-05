@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" width="1200" height="760" font-family="Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
+  <title id="t">Different agents, one shared memory</title>
+  <desc id="d">Muse Code, Claude Code, OpenCode and other MCP apps each connect to the Passaly MCP server with their own token. The server reads and writes one shared memory in ai-memory: a meeting's transcript, recap, files and tasks, and the person's notes. The web assistant (Muse Spark) and the phone (Llama 3.2) use the same memory through the class server. Tested on 2026-11-04: Muse Code wrote uber-plan.md and closed task 3; Claude Code found and read that plan; the meeting page showed the file and the finished task.</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#5b6472"/>
+    </marker>
+    <marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#7a4fd6"/>
+    </marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#2e9c6a"/>
+    </marker>
+    <style>
+      .h { font-size: 17px; font-weight: 700; fill: #1f2733; }
+      .s { font-size: 13px; fill: #4a5361; }
+      .x { font-size: 13px; fill: #2c3440; }
+      .m { font-size: 12.5px; fill: #2c3440; font-family: Consolas, "DejaVu Sans Mono", monospace; }
+      .card { fill: #ffffff; stroke: #d6dbe3; stroke-width: 1.2; }
+      .ok { font-size: 11.5px; font-weight: 700; fill: #146c43; }
+      .doc { font-size: 11.5px; font-weight: 700; fill: #6b7380; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="760" fill="#f7f8fa"/>
+  <text x="40" y="44" font-size="24" font-weight="700" fill="#1f2733">Different agents, one shared memory</text>
+  <text x="40" y="68" class="s">Each agent connects to the Passaly MCP server with its own token. What one writes, the others read.</text>
+
+  <!-- agents -->
+  <g transform="translate(40,96)">
+    <rect class="card" width="300" height="74" rx="12" stroke="#7a4fd6" stroke-width="1.6"/>
+    <text x="18" y="30" class="h">Muse Code</text>
+    <text x="18" y="52" class="s">Meta · settings.json · mcp_servers</text>
+    <rect x="196" y="14" width="88" height="22" rx="11" fill="#e8f5ee"/><text x="240" y="29" text-anchor="middle" class="ok">✔ tested</text>
+  </g>
+  <g transform="translate(40,186)">
+    <rect class="card" width="300" height="74" rx="12" stroke="#7a4fd6" stroke-width="1.6"/>
+    <text x="18" y="30" class="h">Claude Code</text>
+    <text x="18" y="52" class="s">claude mcp add --transport http</text>
+    <rect x="196" y="14" width="88" height="22" rx="11" fill="#e8f5ee"/><text x="240" y="29" text-anchor="middle" class="ok">✔ tested</text>
+  </g>
+  <g transform="translate(40,276)">
+    <rect class="card" width="300" height="74" rx="12"/>
+    <text x="18" y="30" class="h">OpenCode</text>
+    <text x="18" y="52" class="s">opencode.json · remote MCP</text>
+    <rect x="150" y="14" width="134" height="22" rx="11" fill="#eef0f4"/><text x="217" y="29" text-anchor="middle" class="doc">config in README</text>
+  </g>
+  <g transform="translate(40,366)">
+    <rect class="card" width="300" height="74" rx="12"/>
+    <text x="18" y="30" class="h">Any MCP app</text>
+    <text x="18" y="52" class="s">LM Studio, a Claude connector…</text>
+    <rect x="176" y="14" width="108" height="22" rx="11" fill="#eef0f4"/><text x="230" y="29" text-anchor="middle" class="doc">same header</text>
+  </g>
+
+  <!-- agent -> MCP arrows -->
+  <line x1="340" y1="133" x2="436" y2="230" stroke="#7a4fd6" stroke-width="2" marker-end="url(#ap)" marker-start="url(#ap)"/>
+  <line x1="340" y1="223" x2="436" y2="255" stroke="#7a4fd6" stroke-width="2" marker-end="url(#ap)" marker-start="url(#ap)"/>
+  <line x1="340" y1="313" x2="436" y2="280" stroke="#9aa3b2" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#a)" marker-start="url(#a)"/>
+  <line x1="340" y1="403" x2="436" y2="305" stroke="#9aa3b2" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#a)" marker-start="url(#a)"/>
+
+  <!-- MCP server -->
+  <g transform="translate(440,170)">
+    <rect width="300" height="200" rx="16" fill="#f3eefd" stroke="#7a4fd6" stroke-width="1.8"/>
+    <text x="20" y="34" class="h">Passaly MCP server</text>
+    <text x="20" y="56" class="s">one token per app · Bearer pcm_…</text>
+    <text x="20" y="84" class="x">• read: list_files · read_file</text>
+    <text x="20" y="104" class="x">   search_memory · list_tasks</text>
+    <text x="20" y="128" class="x">• write (if allowed): add_document</text>
+    <text x="20" y="148" class="x">   add_task · update_task · save_note</text>
+    <text x="20" y="178" class="s">A token sees only its owner's spaces</text>
+  </g>
+  <line x1="740" y1="270" x2="816" y2="270" stroke="#2e9c6a" stroke-width="2.2" marker-end="url(#ag)" marker-start="url(#ag)"/>
+
+  <!-- ai-memory -->
+  <g transform="translate(820,96)">
+    <rect width="340" height="344" rx="16" class="card" stroke="#2e9c6a" stroke-width="1.8"/>
+    <text x="20" y="34" class="h">🧠  ai-memory (shared)</text>
+    <text x="20" y="56" class="s">the same files for every agent</text>
+    <text x="20" y="88" class="m">session-10/  (the meeting)</text>
+    <text x="36" y="110" class="m">transcript.md</text>
+    <text x="36" y="130" class="m">recap.md</text>
+    <text x="36" y="150" class="m">files/…-uber-plan.md</text>
+    <text x="36" y="170" class="m">tasks/3.md  (done)</text>
+    <text x="36" y="190" class="m">tasks/4.md · tasks/5.md</text>
+    <text x="20" y="222" class="m">person-&lt;id&gt;/  (only you)</text>
+    <text x="36" y="244" class="m">notes/… · profiles</text>
+    <rect x="20" y="268" width="300" height="56" rx="10" fill="#eaf7f0" stroke="#9fd6bb"/>
+    <text x="34" y="291" class="x">Also read by the web assistant (Muse</text>
+    <text x="34" y="311" class="x">Spark) and the phone (Llama 3.2)</text>
+  </g>
+
+  <!-- tested sequence -->
+  <g transform="translate(40,470)">
+    <rect width="1120" height="260" rx="14" fill="#ffffff" stroke="#d6dbe3"/>
+    <text x="20" y="32" class="h">Tested on 2026-11-04: two agents, one memory</text>
+
+    <g transform="translate(20,52)">
+      <rect width="330" height="180" rx="12" fill="#f3eefd" stroke="#cdbdf3"/>
+      <text x="16" y="28" class="x" font-weight="700">1 · Muse Code writes</text>
+      <text x="16" y="54" class="s">"Write a short plan for the Uber task, add it</text>
+      <text x="16" y="72" class="s">as uber-plan to meeting 10, mark task 3 done"</text>
+      <text x="16" y="102" class="m">add_document(uber-plan)  ✔</text>
+      <text x="16" y="124" class="m">update_task(task_id=3,</text>
+      <text x="16" y="142" class="m">            status=done)  ✔</text>
+      <text x="16" y="166" class="s">→ files/…-uber-plan.md, tasks/3.md</text>
+    </g>
+    <line x1="350" y1="142" x2="384" y2="142" stroke="#5b6472" stroke-width="2" marker-end="url(#a)"/>
+
+    <g transform="translate(395,52)">
+      <rect width="330" height="180" rx="12" fill="#f3eefd" stroke="#cdbdf3"/>
+      <text x="16" y="28" class="x" font-weight="700">2 · Claude Code reads it</text>
+      <text x="16" y="54" class="s">"Search my Passaly memory for the Uber plan</text>
+      <text x="16" y="72" class="s">and tell me the first step"</text>
+      <text x="16" y="102" class="m">search_memory · read_file  ✔</text>
+      <text x="16" y="130" class="s">"I found it in uber-plan.md, in the 'test'</text>
+      <text x="16" y="148" class="s">class. Step 1: define two things: user</text>
+      <text x="16" y="166" class="s">and ride…"</text>
+    </g>
+    <line x1="725" y1="142" x2="759" y2="142" stroke="#5b6472" stroke-width="2" marker-end="url(#a)"/>
+
+    <g transform="translate(770,52)">
+      <rect width="330" height="180" rx="12" fill="#ffffff" stroke="#EC662E" stroke-width="1.6"/>
+      <text x="16" y="28" class="x" font-weight="700">3 · People see it in the room</text>
+      <text x="16" y="58" class="x">Files: uber-plan.md</text>
+      <text x="16" y="86" class="x">☑ Build a system like Uber in 10</text>
+      <text x="16" y="104" class="x">   minutes · done · via agent</text>
+      <text x="16" y="124" class="s">   ↳ plan in uber-plan.md</text>
+      <text x="16" y="158" class="s">The same files, read by people and agents.</text>
+    </g>
+  </g>
+</svg>
