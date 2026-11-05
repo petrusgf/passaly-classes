@@ -183,7 +183,18 @@ was said in the meeting comes in. Needs:
   Web client whose redirect URI is `https://passaly.com/classes/api/google/callback`
   ([consent screen](https://developers.google.com/workspace/guides/configure-oauth-consent),
   [client](https://developers.google.com/workspace/guides/create-credentials)).
-  In Testing, a sign-in lasts 7 days, then sign in again.
+  In Testing, a sign-in lasts 7 days, then sign in again. Add
+  `https://www.googleapis.com/auth/meetings.space.created` under Google Auth
+  platform → Data Access too: without it Google left the Meet box off the
+  consent screen and the app got name and email only;
+- the meeting created here, with the option ticked: a Meet link pasted into
+  the call field cannot be read, because the permission covers only the Meet
+  spaces this app created.
+
+Meet marks a transcript `ENDED` before its text is there, so the import waits
+for `FILE_GENERATED`. Tested 2026-11-04 with a real two-person meeting: Meet's
+transcript (Portuguese and English, both speakers) came back as the lines and
+Muse wrote the recap in the meeting's language.
 
 Docs: [OpenID Connect](https://developers.google.com/identity/openid-connect/openid-connect),
 [Meet spaces](https://developers.google.com/workspace/meet/api/reference/rest/v2/spaces),
@@ -241,6 +252,23 @@ Any MCP-capable agent shares the same memory. For example:
     {"mcp": {"passaly": {"type": "remote", "url": "https://passaly.com/classes/mcp",
       "headers": {"Authorization": "Bearer pcm_<your token>"}, "oauth": false}}}
 
+    // Muse Code, ~/.config/muse/settings.json (docs: dev.meta.ai/docs/muse-code/extending)
+    {"schema_version": 1,
+     "mcp_servers": {"passaly": {"transport": "streamable_http",
+       "url": "https://passaly.com/classes/mcp",
+       "headers": {"Authorization": "Bearer pcm_<your token>"}, "mode": "optional"}}}
+
+Muse Code needs `"schema_version": 1` and the key `mcp_servers` (not
+`mcpServers`). On Windows, save the file without a byte-order mark: a file
+written by PowerShell starts with one, and Muse Code then reports a malformed
+settings file. Restart it and type `/mcp` to see the tools.
+
+**Tested with two agents on one memory** (2026-11-04): Muse Code read a
+meeting's tasks, wrote a plan with `add_document` and closed the task with
+`update_task`; Claude Code, connected with its own config, found that plan
+with `search_memory` and read it; the meeting page showed the document in
+Files and the task done with Muse Code's result.
+
 For a Claude custom connector, put the header under *Request headers*
 ([Claude help](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp)).
 
@@ -289,6 +317,23 @@ signing in with Google).
                                      # privacy, assistant tools, files (a real PDF),
                                      # MCP and its tokens, the SQLite lock regression
     cd app && flutter test           # app: retrieval, replies, ACTION parsing, time zones
+
+## Known issues
+
+- **Llama on the phone can loop.** In a test on 2026-11-04 the 3B model
+  repeated the tutor prompt instead of answering, and the 1B one echoed the
+  question before answering. The app now asks for a short answer and trims
+  echoed labels, questions and repeats, but the model running on until the
+  output cap is not fixed; Muse in the cloud answered the same question well.
+  Likely culprit: how the prompt reaches LiteRT-LM's conversation (chat
+  template and stop tokens).
+- **A Google Meet class has no typing box**: its lines come from Meet's
+  transcript only. Make the class without the Meet option to type lines.
+- **The MCP server has no rate limit of its own**; tokens protect the data,
+  not the server's capacity. A `limit_req` zone in nginx is the next step.
+- **Google Meet** needs a Workspace plan with transcripts for the host, and
+  the Meet permission needs Google's review before people outside the test
+  users can use it.
 
 ## Built with Llama
 

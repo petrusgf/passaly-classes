@@ -109,6 +109,13 @@ but not change them.
   and only yours. Each app gets its own **MCP token**: shown once,
   read-only unless you allow writing, revocable, expiring after 90 days.
 
+### Tested for real
+- A two-person **Google Meet** meeting: Meet's transcript came back by itself,
+  speaker by speaker, and Muse wrote the recap.
+- **Two agents, one memory**: Meta's Muse Code wrote a plan into a meeting and
+  closed its task; Claude Code then found that plan in the same memory; the
+  meeting page showed both.
+
 ### Files in a class or meeting
 Anyone in it can add a PDF, .txt or .md. Everyone in it can read it, and the
 assistant and connected AI apps use it to answer.
@@ -155,6 +162,12 @@ In the app, the choice is one switch: **This phone · Llama** or
   Chrome or Edge.
 - **Llama on the phone is weaker at the assistant's actions** than Muse. Use the 3B model for
   the assistant.
+- **Llama on the phone is not reliable yet.** In our last test it repeated
+  its instructions instead of answering, while Muse in the cloud answered the
+  same question from the class. Fixing that is the first job after the
+  hackathon.
+- **A Google Meet class takes its words from Meet only**; to type lines,
+  create the class without the Meet option.
 - **Memory search matches words.** When nothing matches, the assistant reads
   your latest recaps instead.
 - **Accounts are a name and a key**, or a Google sign-in, for the demo. The plan is to move it into
