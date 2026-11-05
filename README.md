@@ -296,6 +296,12 @@ Llama 3.2 is licensed under the Llama 3.2 Community License, Copyright © Meta
 Platforms, Inc. All Rights Reserved. The app shows this, and the license text,
 on its "Tutor AI" screen.
 
+## License
+
+This repository has no open-source license: you are welcome to read it, but
+all rights are reserved. Llama 3.2 stays under Meta's license (above), and
+ai-memory under [its own](https://github.com/akitaonrails/ai-memory).
+
 ## Moving into Passaly later
 
 Same stack and style as quiz-api (FastAPI, SQLAlchemy async, one router).
