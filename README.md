@@ -191,7 +191,9 @@ when the host joins (`autoTranscriptionGeneration: ON`). After the meeting
 the server reads Meet's transcript, speaker by speaker, into the session's
 lines, then writes the recap, tasks and memory as usual. It checks every
 minute for up to 30 minutes, since Meet finishes the transcript after
-everyone leaves; the host can also press "Fetch Meet transcript". Only what
+everyone leaves; the host can also press "Fetch Meet transcript". The page's
+header has **Sign out**; a name-only account asks first, since its key lives
+only in that browser. Only what
 was said in the meeting comes in. Needs:
 - a Google Workspace plan with Meet transcripts for the host (Business
   Standard or higher, Workspace Individual, Education Plus…; [editions](https://support.google.com/meet/answer/12849897));

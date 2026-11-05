@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 866" width="1200" height="866" font-family="Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
   <title id="t">How a class or meeting flows</title>
-  <desc id="d">Before: the host starts a class or meeting and shares the invite. During: each device captions its own speaker into one live transcript. After: the AI writes the recap and profiles into the shared memory. Later: the tutor answers from the class or sends the question to the teacher, whose answer joins the material; the assistant answers from memory and proposes actions the user confirms. Tasks: added in the room, by the assistant or by an agent, written to memory as tasks/&lt;id&gt;.md, done by an agent that reports the result.</desc>
+  <desc id="d">Before: the host starts a class or meeting and shares the invite. During: each device captions its own speaker into one live transcript, or Google Meet's transcript comes back after the call. After: the AI writes the recap and profiles into the shared memory. Later: the tutor answers from the class or sends the question to the teacher, whose answer joins the material; the assistant answers from memory and proposes actions the user confirms. Tasks: added in the room, by the assistant or by an agent, written to memory as tasks/&lt;id&gt;.md, done by an agent that reports the result.</desc>
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0 0L10 5L0 10z" fill="#5b6472"/>
@@ -44,9 +44,11 @@
     <text x="56" y="38" class="h">During</text>
     <text x="20" y="74" class="x">🎙 Each device captions</text>
     <text x="20" y="94" class="x">only its own speaker.</text>
-    <text x="20" y="124" class="x">Lines join one live,</text>
-    <text x="20" y="144" class="x">labeled transcript.</text>
-    <text x="20" y="174" class="s">No audio or video is stored.</text>
+    <text x="20" y="114" class="x">Lines join one live,</text>
+    <text x="20" y="133" class="x">labeled transcript.</text>
+    <text x="20" y="155" class="s">Or Google Meet's transcript,</text>
+    <text x="20" y="171" class="s">after the call.</text>
+    <text x="20" y="190" class="s">No audio or video is stored.</text>
   </g>
   <line x1="580" y1="200" x2="616" y2="200" stroke="#5b6472" stroke-width="2.2" marker-end="url(#a)"/>
 

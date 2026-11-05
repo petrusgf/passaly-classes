@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 820" width="1200" height="820" font-family="Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 910" width="1200" height="910" font-family="Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
   <title id="t">Passaly Classes architecture</title>
-  <desc id="d">The web page, the Android app and AI apps reach the class server through passaly.com/classes. The class server keeps classes, files, tasks and tokens, asks Meta's Muse Spark in the cloud, and shares one memory in a private ai-memory container. The phone runs Llama 3.2 itself.</desc>
+  <desc id="d">The web page, the Android app and AI apps reach the class server through passaly.com/classes. The class server keeps classes, files, tasks and tokens, asks Meta's Muse Spark in the cloud, and shares one memory in a private ai-memory container. The phone runs Llama 3.2 itself. Google provides the sign-in and, for meetings created with a Meet link, Meet's transcript.</desc>
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0 0L10 5L0 10z" fill="#5b6472"/>
@@ -21,7 +21,7 @@
     </style>
   </defs>
 
-  <rect width="1200" height="820" fill="#f7f8fa"/>
+  <rect width="1200" height="910" fill="#f7f8fa"/>
   <text x="40" y="44" font-size="24" font-weight="700" fill="#1f2733">Passaly Classes · architecture</text>
   <text x="40" y="68" class="s">Two brains (Muse in Meta's cloud, Llama on the phone), one shared memory, one MCP server for any AI app.</text>
 
@@ -158,4 +158,11 @@
     <text x="20" y="48" class="s">downloaded once to the server with the owner's token</text>
   </g>
   <line x1="954" y1="730" x2="954" y2="690" stroke="#c84f1c" stroke-width="2" marker-end="url(#ao)"/>
+
+  <g transform="translate(40,826)">
+    <rect width="1120" height="64" rx="14" fill="#eef7ee" stroke="#a9d3ad"/>
+    <text x="20" y="27" class="h" fill="#1e6b2f">🔑  Google · Sign in with Google · Meet REST API</text>
+    <text x="20" y="48" class="s">who you are (openid) · creates the Meet link with the transcript on · reads Meet's transcript after the call</text>
+  </g>
+  <line x1="620" y1="686" x2="620" y2="820" stroke="#2e8b3e" stroke-width="2" marker-end="url(#a)" marker-start="url(#a)"/>
 </svg>

@@ -155,6 +155,7 @@ In the app, the choice is one switch: **This phone · Llama** or
 | `test_app.py`, `app/test/` | Checks for the whole flow |
 | `README.md` | How to run, build and deploy it, the API and the MCP server |
 | `docs/` | The diagrams |
+| `deploy/` | The server's scripts, nginx block and example settings files (no keys) |
 
 ## Limits today
 
