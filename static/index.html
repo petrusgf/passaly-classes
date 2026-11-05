@@ -142,6 +142,9 @@ async function home() {
           ${me.meet ? `<div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="google_meet" id="gm" checked>
             <label class="form-check-label small" for="gm">Create a Google Meet link with the transcript on:
               what is said there comes back here after the meeting</label></div>` : ''}
+          ${me.google && !me.meet ? `<div class="alert alert-warning small py-2 mb-2">Google did not give this app access to
+            Google Meet, so it cannot create Meet links or bring back their transcripts. Sign out, sign in with Google
+            again and tick the Google Meet box.</div>` : ''}
           <input class="form-control mb-3" name="call_url" placeholder="Video call link (Meet, Zoom), optional" ${me.meet ? 'hidden' : ''}>
           <button class="btn btn-primary w-100">Create</button>
         </form><div class="text-danger small mt-2" id="err"></div>
