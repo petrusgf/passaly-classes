@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 866" width="1200" height="866" font-family="Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
   <title id="t">How a class or meeting flows</title>
-  <desc id="d">Before: the host starts a class or meeting and shares the invite. During: each device captions its own speaker into one live transcript, or Google Meet's transcript comes back after the call. After: the AI writes the recap and profiles into the shared memory. Later: the tutor answers from the class or sends the question to the teacher, whose answer joins the material; the assistant answers from memory and proposes actions the user confirms. Tasks: added in the room, by the assistant or by an agent, written to memory as tasks/&lt;id&gt;.md, done by an agent that reports the result.</desc>
+  <desc id="d">Before: the host starts a class or meeting and shares the invite. During: each device captions its own speaker into one live transcript, or Google Meet's transcript comes back after the call. After: the AI writes the recap and profiles into the shared memory. Later: the tutor answers from the class or sends the question to the teacher, whose answer joins the material; the assistant answers from memory and proposes actions the user confirms. Tasks: the AI turns the recap's action items into tasks; people, the assistant and agents add more; written to memory as tasks/&lt;id&gt;.md, done by an agent that reports the result.</desc>
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0 0L10 5L0 10z" fill="#5b6472"/>
@@ -57,12 +57,13 @@
     <rect class="card" width="250" height="200" rx="14"/>
     <circle cx="30" cy="32" r="16" fill="#EC662E"/><text x="30" y="37" text-anchor="middle" class="num">3</text>
     <text x="56" y="38" class="h">After: the host ends it</text>
-    <text x="20" y="74" class="x">📝 <tspan font-weight="700">Recap</tspan>: summary,</text>
-    <text x="20" y="94" class="x">decisions, action items,</text>
-    <text x="20" y="114" class="x">open questions.</text>
-    <text x="20" y="144" class="x">👤 <tspan font-weight="700">Profiles</tspan>: how the</text>
-    <text x="20" y="164" class="x">teacher teaches, how each</text>
-    <text x="20" y="184" class="x">student learns (classes).</text>
+    <text x="20" y="70" class="x">📝 <tspan font-weight="700">Recap</tspan>: summary,</text>
+    <text x="20" y="88" class="x">decisions, action items,</text>
+    <text x="20" y="106" class="x">open questions.</text>
+    <text x="20" y="128" class="x">✅ <tspan font-weight="700">Tasks</tspan>: each action</text>
+    <text x="20" y="146" class="x">item becomes a task.</text>
+    <text x="20" y="168" class="x">👤 <tspan font-weight="700">Profiles</tspan>: how the</text>
+    <text x="20" y="186" class="x">teacher teaches (classes).</text>
   </g>
   <line x1="870" y1="200" x2="906" y2="200" stroke="#2e9c6a" stroke-width="2.2" marker-end="url(#ag)"/>
 
@@ -72,7 +73,7 @@
     <text x="20" y="38" class="h" fill="#1d6b47">🧠 Shared memory</text>
     <text x="20" y="70" class="x">transcript · recap</text>
     <text x="20" y="92" class="x">teacher answers · files</text>
-    <text x="20" y="114" class="x">notes · profiles</text>
+    <text x="20" y="114" class="x">notes · tasks · profiles</text>
     <text x="20" y="146" class="s">One space per session and</text>
     <text x="20" y="164" class="s">per person. You only ever see</text>
     <text x="20" y="182" class="s">what you took part in.</text>
@@ -156,8 +157,8 @@
     <text x="20" y="30" class="h">✅ Tasks (for people and agents)</text>
     <g transform="translate(20,48)">
       <rect width="230" height="66" rx="10" fill="#fff4ee" stroke="#f3c6ad"/>
-      <text x="14" y="28" class="x" font-weight="600">Added in the room,</text>
-      <text x="14" y="48" class="s">by the assistant or by an agent</text>
+      <text x="14" y="28" class="x" font-weight="600">AI: from the recap</text>
+      <text x="14" y="48" class="s">or added in the room / by an agent</text>
     </g>
     <line x1="250" y1="81" x2="286" y2="81" stroke="#5b6472" stroke-width="2" marker-end="url(#a)"/>
     <g transform="translate(290,48)">
