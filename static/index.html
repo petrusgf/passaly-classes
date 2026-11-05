@@ -73,7 +73,13 @@ async function route() {
   }
   timers.forEach(clearInterval); timers = [];
   stopCaptions();
-  $('#me').textContent = me ? `Signed in as ${me.name}` : '';
+  $('#me').innerHTML = me ? `Signed in as ${esc(me.name)} · <a href="#" id="signout" class="link-secondary">Sign out</a>` : '';
+  if (me) $('#signout').onclick = e => {
+    e.preventDefault();
+    // A name-only account lives in this browser alone: its key cannot be recovered.
+    if (!me.google && !confirm('You signed in with a name only, so this account cannot be opened again after signing out. Sign out anyway?')) return;
+    localStorage.removeItem('person'); me = null; go('/');
+  };
   if (!me) return askName();
   const p = location.pathname.slice(ROOT.length);
   let m;
@@ -96,7 +102,7 @@ function askName() {
         <div class="text-danger small mt-2" id="err">${esc(signinNote)}</div>
       </div></div></div></div>`;
   api('GET', '/api/tutor').then(t => {
-    if (t.google) $('#google').innerHTML = `<div class="text-center small text-body-secondary mb-2">or</div>
+    if (t.google && $('#google')) $('#google').innerHTML = `<div class="text-center small text-body-secondary mb-2">or</div>
       <a class="btn btn-outline-dark w-100" href="${ROOT}/api/google/start">Sign in with Google</a>
       <div class="small text-body-secondary mt-2">With Google, meetings get a Google Meet link whose transcript comes back here by itself.</div>`;
   }).catch(() => {});
