@@ -396,7 +396,7 @@ def _jwt(claims):
 app.GOOGLE_ID, app.GOOGLE_SECRET = "cid", "secret"
 app.GOOGLE_REDIRECT, app.GOOGLE_HOME = "http://testserver/api/google/callback", "http://testserver/"
 google_calls, meet_calls = [], []
-meet_state = {"ended": False}
+meet_state = {"ended": False, "file": False}
 
 
 async def fake_token(data):
@@ -419,7 +419,8 @@ async def fake_meet(method, path, access, **kw):
         return {"conferenceRecords": [{"name": "conferenceRecords/c1", "startTime": "2026-11-04T10:00:00Z",
                                        **({"endTime": "2026-11-04T10:30:00Z"} if meet_state["ended"] else {})}]}
     if path == "/conferenceRecords/c1/transcripts":
-        return {"transcripts": [{"name": "conferenceRecords/c1/transcripts/t1", "state": "ENDED"}]}
+        return {"transcripts": [{"name": "conferenceRecords/c1/transcripts/t1",
+                                 "state": "FILE_GENERATED" if meet_state["file"] else "ENDED"}]}
     if path.endswith("/entries"):
         if not kw["params"].get("pageToken"):
             return {"transcriptEntries": [{"participant": "conferenceRecords/c1/participants/p2", "text": "I'll write the FAQ.",
@@ -467,6 +468,9 @@ with TestClient(app.app) as c:
     # still running: nothing to fetch yet
     assert c.post(f"/api/classes/{m['id']}/meet-transcript", headers=ana).status_code == 409
     meet_state["ended"] = True
+    # ended, but Meet has not written the transcript yet: still not ready, never "no transcript"
+    assert c.post(f"/api/classes/{m['id']}/meet-transcript", headers=ana).status_code == 409
+    meet_state["file"] = True
     c.post(f"/api/classes/{m['id']}/end", headers=ana)  # the background wait picks it up
     lines = c.get(f"/api/classes/{m['id']}/lines", headers=ana).json()["lines"]
     assert [(l["name"], l["role"], l["text"]) for l in lines] == [

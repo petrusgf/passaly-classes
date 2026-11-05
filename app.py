@@ -260,7 +260,8 @@ async def _import_meet(db, s: ClassSession) -> int | None:
     entries, names = [], {}
     for rec in sorted(recs, key=lambda r: r["startTime"]):
         trs = (await _meet("GET", f"/{rec['name']}/transcripts", access)).get("transcripts", [])
-        if any(t.get("state") == "STARTED" for t in trs):
+        # ENDED: stopped, but the text may not be there yet; FILE_GENERATED: complete.
+        if any(t.get("state") != "FILE_GENERATED" for t in trs):
             return None
         for t in trs:
             page = ""
