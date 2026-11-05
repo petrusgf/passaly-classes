@@ -159,10 +159,20 @@ with TestClient(app.app) as c:
     proj = memory.session_project(mt["id"])
     assert "Bob (host)" in pages[(proj, "transcript.md")] and "Ana: send deck" in pages[(proj, "recap.md")]
 
+    # the recap's action items became tasks in the meeting, once, for everyone in it
+    ts = c.get(f"/api/tasks?session_id={mt['id']}", headers=ana).json()
+    ts = ts["tasks"] if isinstance(ts, dict) else ts
+    assert [(t["title"], t["assignee"], t["due"], t["source"]) for t in ts] == [("send deck", "Ana", "Friday", "assistant")]
+    assert c.get(f"/api/tasks?session_id={mt['id']}", headers=eve).status_code in (200, 404)
+    eve_ts = c.get("/api/tasks", headers=eve).json()
+    assert not (eve_ts["tasks"] if isinstance(eve_ts, dict) else eve_ts)
+
     # a phone running Llama sends its own recap; only the host may
     assert c.put(f"/api/classes/{mt['id']}/recap", headers=ana, json={"text": "x"}).status_code == 403
     assert c.put(f"/api/classes/{mt['id']}/recap", headers=host,
                  json={"text": "## Summary\nDeck Friday.\n## Action items\n- Ana: deck"}).json()["recap"].count("\n") == 3
+    ts = c.get(f"/api/tasks?session_id={mt['id']}", headers=ana).json()
+    assert len(ts["tasks"] if isinstance(ts, dict) else ts) == 1  # once per meeting
 
     # memory search sees only your own classes and meetings
     assert c.get("/api/memory/search?q=deck", headers=ana).json()["hits"]
@@ -335,7 +345,7 @@ with TestClient(app.app) as c:
     assert t1["status"] == "open" and t1["source"] == "app"
     page = pages[(memory.session_project(mid), f"tasks/{t1['id']}.md")]
     assert "# Task: Send the deck" in page and "Status: **open**" in page and f"task_id {t1['id']}" in page
-    assert [t["title"] for t in c.get("/api/tasks", headers=host).json()] == ["Send the deck"]
+    assert sorted(t["title"] for t in c.get("/api/tasks", headers=host).json()) == ["Send the deck", "send deck"]  # + the recap's
     assert c.get("/api/tasks", headers=eve).json() == []
     assert c.post("/api/tasks", headers=eve, json={"title": "x", "session_id": mid}).status_code == 404
     assert c.patch(f"/api/tasks/{t1['id']}", headers=eve, json={"status": "done"}).status_code == 404
@@ -365,7 +375,7 @@ with TestClient(app.app) as c:
     # An agent over MCP: lists open tasks, starts one, finishes it with a result.
     agent = c.post("/api/mcp/tokens", headers=host, json={"name": "OpenCode", "can_write": True}).json()["token"]
     _, listed = tool(agent, "list_tasks", {"status": "open"})
-    assert {t["title"] for t in listed["tasks"]} == {"Send the deck", "Book the launch room"}
+    assert {t["title"] for t in listed["tasks"]} == {"Send the deck", "Book the launch room", "send deck"}
     tid = next(t["id"] for t in listed["tasks"] if t["title"] == "Send the deck")
     assert tool(agent, "update_task", {"task_id": tid, "status": "in_progress"})[1]["status"] == "in_progress"
     err, done = tool(agent, "update_task", {"task_id": tid, "status": "done", "result": "Sent to all, link: deck.pdf"})
@@ -383,6 +393,12 @@ with TestClient(app.app) as c:
     assert any(f["uri"].endswith(f"/tasks/{tid}.md") for f in files["files"])
 
 memory.URL = ""
+
+# --- the recap's action items, parsed ------------------------------------------
+assert app.action_items("## Summary\nx\n## Action items\n- Leo: write the FAQ (due: Friday)\n- send deck\n## Open questions\nNone.") == [
+    ("write the FAQ", "Leo", "Friday"), ("send deck", None, None)]
+assert app.action_items("## Action items\nNone.\n## Open questions\n- why?") == []
+assert app.action_items("## Action items\n- Nenhum.") == []
 
 # --- Google: sign in, a Meet link with the transcript on, its transcript after ----
 import base64 as _b64  # noqa: E402

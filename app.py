@@ -445,6 +445,7 @@ async def _update_profiles(session_id: int):
         s.recap = recap[:MAX_RECAP] or None
         await db.commit()
         await _remember_session(db, s)
+        await _recap_tasks(db, s)
         # Each AI call takes seconds: never hold a transaction (and SQLite's
         # lock) across one, or students asking meanwhile get "database is locked".
         old = await _profile(db, s.teacher_id, "teacher")
@@ -794,6 +795,7 @@ async def put_recap(session_id: int, body: RecapText, user: AnswerUser = Depends
     s.recap = _clean_block(body.text, MAX_RECAP, "Recap")
     await db.commit()
     await _remember_session(db, s)
+    await _recap_tasks(db, s)
     return _session_out(s, m.role)
 
 
@@ -901,6 +903,51 @@ async def _add_task(db, user: AnswerUser, title, details=None, assignee=None, du
     await db.commit()
     await _remember_task(db, t)
     return t
+
+
+RECAP_TASK_NOTE = "From the recap"
+
+
+def action_items(recap: str) -> list[tuple[str, str | None, str | None]]:
+    """The recap's "## Action items" lines ("- Owner: task (due: date)") as
+    (task, owner, due). "None." and other non-items are skipped."""
+    m = re.search(r"^##\s*Action items\s*$(.*?)(?=^##|\Z)", recap or "", re.S | re.M | re.I)
+    out = []
+    for line in (m.group(1).splitlines() if m else []):
+        t = line.strip()
+        if not t.startswith(("-", "*", "•")):
+            continue
+        t = t.lstrip("-*• ").strip()
+        if t.lower().rstrip(".") in ("", "none", "nenhum", "nenhuma", "ninguno", "aucun"):
+            continue
+        due = None
+        d = re.search(r"\(\s*(?:due|prazo|até|fecha)\s*:?\s*([^)]+)\)\s*\.?$", t, re.I)
+        if d:
+            due, t = d.group(1).strip(), t[:d.start()].strip()
+        owner = None
+        o = re.match(r"([^:]{1,60}):\s*(.+)", t)
+        if o:
+            owner, t = o.group(1).strip(), o.group(2).strip()
+        if t:
+            out.append((t.rstrip(".")[:200], owner, due))
+    return out
+
+
+async def _recap_tasks(db, s: ClassSession) -> int:
+    """Each action item in the recap becomes a task in that class or meeting,
+    added by the assistant for the host. Once per session."""
+    done = (await db.execute(select(func.count()).select_from(Task).where(
+        Task.session_id == s.id, Task.source == "assistant",
+        Task.details.like(f"{RECAP_TASK_NOTE}%")))).scalar()
+    if done:
+        return 0
+    host = AnswerUser(id=s.teacher_id, username=s.teacher_name, display_name=s.teacher_name)
+    n = 0
+    for title, owner, due in action_items(s.recap):
+        await _add_task(db, host, title, details=f"{RECAP_TASK_NOTE} of \"{s.title}\".",
+                        assignee=owner, due=due, session_id=s.id, source="assistant")
+        n += 1
+    return n
 
 
 async def _update_task(db, user: AnswerUser, task_id, status=None, result=None) -> Task:

@@ -176,7 +176,10 @@ original is kept for download; its text (`pypdf` for PDFs) goes into the
 session's memory, so the assistant and MCP can use it.
 
 **Tasks.** A task directory per class or meeting (everyone in it sees it), or
-a personal one. Add a task from the room ("Add task"), by asking the assistant
+a personal one. **The AI adds them too:** when a recap is written (by Muse on
+the server, or by Llama on the host's phone), each line under "Action items"
+(`- Owner: task (due: date)`) becomes a task in that class or meeting, added by
+the assistant for the host, with the owner and due date, once per session. Add a task from the room ("Add task"), by asking the assistant
 ("add a task in the meeting: …"; Muse calls `add_task`, Llama writes an
 `ACTION {"type":"add_task",…}` line), or from an agent over MCP. Each task is
 mirrored to memory as `tasks/<id>.md` (status, who, due, details, result, and
@@ -189,7 +192,8 @@ how to update it), rewritten on every change, so agents find it with
 meeting can create a Google Meet link whose transcript turns on by itself
 when the host joins (`autoTranscriptionGeneration: ON`). After the meeting
 the server reads Meet's transcript, speaker by speaker, into the session's
-lines, then writes the recap, tasks and memory as usual. It checks every
+lines, then writes the recap and memory as usual, and the recap's action
+items become tasks. It checks every
 minute for up to 30 minutes, since Meet finishes the transcript after
 everyone leaves; the host can also press "Fetch Meet transcript". The page's
 header has **Sign out**; a name-only account asks first, since its key lives
